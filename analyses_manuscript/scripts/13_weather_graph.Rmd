@@ -1,0 +1,139 @@
+---
+title: "Weather graph"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(lubridate)
+library(tidyverse)
+
+load("analyses_manuscript/theme_function.R")
+```
+
+# Weather graph for site, 2020-2023
+
+```{r}
+data_weather <- read.csv("analyses_manuscript/raw_data/acis2_riverside_airport_weather.csv")
+
+head(data_weather)
+
+days_with_no_data <- data_weather %>%
+  filter(is.na(precip))
+
+data_weather %>% distinct(precip)
+
+```
+
+```{r}
+ppt_by_date <- data_weather %>%
+  mutate(date = mdy(date)) %>%
+  mutate(month = month(date),
+         day = day(date),
+         year = year(date)) %>%
+  mutate(precip = case_when(
+    precip == "T" ~ '0', # replace trace ppt with zero
+    precip == "M" ~ '0', # replace missing data with zero
+    TRUE ~ precip
+  )) %>%
+  mutate(precip = as.numeric(precip))
+
+ppt_by_date
+```
+
+Plot daily precipitation.
+
+```{r}
+ppt_by_date %>%
+  ggplot(aes(
+    x = date,
+    y = precip
+  )) +
+  geom_line()
+```
+
+
+```{r}
+ppt_by_month <- ppt_by_date %>%
+  group_by(year, month) %>%
+  summarise(date = date,
+            monthly_precip = sum(precip)) %>%
+  mutate(month_as_date = ymd(paste(year, month, "01", sep = "-")))
+
+head(ppt_by_month)
+```
+```{r}
+ggplot(data = ppt_by_month,
+       aes(
+    x = month_as_date,
+    y = monthly_precip
+  )) +
+  geom_line() +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %Y") +
+  theme_Publication() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Summary of precip in each year.
+
+```{r}
+
+growing_season_ppt <- ppt_by_month %>%
+  distinct(year, month, .keep_all = TRUE) %>%
+  mutate(season = case_when(
+    month >= 10 ~ "winter",
+    month <= 5 ~ "spring",
+    .default = "summer"
+  )) %>%
+  group_by(year, season) %>%
+  summarise(
+    season_ppt = sum(monthly_precip)
+  ) %>%
+  arrange(year, season) %>%
+  mutate(growing_season = case_when(
+    year == 2020 & season == "winter" ~ "2020-2021 growing season",
+    year == 2021 & season == "spring" ~ "2020-2021 growing season",
+    year == 2021 & season == "winter" ~ "2021-2022 growing season",
+    year == 2022 & season == "spring" ~ "2021-2022 growing season",
+    year == 2022 & season == "winter" ~ "2022-2023 growing season",
+    year == 2023 & season == "spring" ~ "2022-2023 growing season",
+    .default = "summer"
+  ))
+growing_season_ppt
+```
+
+Growing season precipitation.
+
+```{r}
+growing_season_total_ppt <- growing_season_ppt %>%
+  filter(growing_season != "summer") %>%
+  group_by(growing_season) %>%
+  summarise(
+    total_ppt = sum(season_ppt)
+  ) %>%
+  rename("total_ppt_inches" = total_ppt) %>%
+  mutate(total_ppt_mm = total_ppt_inches * 25.4)
+growing_season_total_ppt
+```
+
+```{r}
+write.table(growing_season_total_ppt,
+          file = "analyses_manuscript/stats_results/growing_season_precipitation.txt",
+          quote = FALSE,
+          row.names = FALSE)
+
+```
+
+

@@ -1,0 +1,797 @@
+---
+title: "Multivariate Analyses"
+author: "Advyth Ramachandran"
+date: '`r Sys.Date()`'
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options:
+  chunk_output_type: inline
+---
+
+# Multivariate analyses
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggrepel)
+library(ggnewscale)
+library(indicspecies)
+library(data.table)
+library(openxlsx)
+```
+
+```{r}
+species_list <- read.csv("analyses_manuscript/raw_data/20230918_CHRRP_species_list.csv")
+species_list
+```
+
+```{r}
+overall_comp_df <- read.csv("analyses_manuscript/processed_data/overall_comp_matrix.csv")
+
+overall_comp_mat <- overall_comp_df %>%
+  dplyr::select(-BG,
+         -LIT,
+         -year_treatment) %>%
+  unite(plot_info, plot, year, treatment, sep = "in") %>%
+  column_to_rownames("plot_info") %>%
+  as.matrix()
+head(overall_comp_mat)
+  
+```
+
+```{r}
+native_comp <- read.csv("analyses_manuscript/processed_data/native_comp_matrix.csv")
+
+native_comp_df <- native_comp %>%
+  mutate(year = as.factor(year)) %>%
+  dplyr::select(-BG,
+         -LIT) %>%
+  mutate(total = rowSums(across(where(is.numeric)))) %>%
+  filter(total > 0)
+  
+# To run an NMDS, we need to remove plots that contain zero native species abundance
+
+native_comp_mat <- native_comp_df %>%
+  dplyr::select(-year_treatment,
+         -total) %>%
+  unite(plot_info, plot, year, treatment, sep = "in") %>%
+  column_to_rownames("plot_info") %>%
+  as.matrix()
+head(native_comp_mat)
+```
+
+## Import indicator species
+
+```{r}
+indicator_species_for_raked <- c(
+  "BRATOR",
+  "AMSMEN",
+  "CRYINT",
+  "SCHBAR",
+  "EROCIC",
+  "LUPBIC",
+  "CALCIL"
+)
+
+indicator_species_for_raked_df <- data.frame(indicator_species_for_raked) %>%
+  mutate(indicator = "*") %>%
+  rename("species" = indicator_species_for_raked)
+
+indicator_species_for_raked_df
+```
+
+
+## Plotting theme
+
+```{r}
+theme_publication <- function(base_size=12, base_family="Helvetica") {
+  library(grid)
+  library(ggthemes)
+  (theme_foundation(base_size=base_size, base_family=base_family)
+    + theme(plot.title = element_text(face = "bold",
+                                      size = rel(1.2), hjust = 0.5),
+            text = element_text(),
+            panel.background = element_rect(colour = NA),
+            plot.background = element_rect(colour = NA),
+            panel.border = element_rect(colour = "black", size = 0.5),
+            axis.title = element_text(face = "bold", size = rel(1)),
+            axis.title.y = element_text(angle=90,vjust =2),
+            axis.title.x = element_text(vjust = -0.2),
+            axis.text = element_text(), 
+            # axis.line = element_line(colour="black", size = 0.5),
+            axis.ticks = element_line(),
+            panel.grid.major = element_line(colour="#f0f0f0"),
+            panel.grid.minor = element_blank(),
+            legend.key = element_rect(colour = NA),
+            legend.position = "right",
+            legend.direction = "vertical",
+            legend.key.size= unit(0.9, "cm"),
+            legend.spacing = unit(0, "cm"),
+            legend.title = element_text(face="plain"),
+            plot.margin=unit(c(10,5,5,5),"mm"),
+            strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+            strip.text = element_text(face="bold")
+))}
+
+treatment_groups_color_map <- c("2021_unraked" = "lightblue", 
+                   "2021_raked" = "lightblue", 
+                   "2022_unraked" = "darkgoldenrod2",
+                   "2022_raked" = "antiquewhite4",
+                   "2023_unraked" = "darkgoldenrod2",
+                   "2023_raked" = "antiquewhite4")
+
+treatment_color_map <- c("unraked" = "darkgoldenrod2", "raked" = "antiquewhite4")
+
+my_color_map <- c(
+  # If treatment groups
+  "2021_unraked" = "lightblue", 
+   "2021_raked" = "lightblue", 
+   "2022_unraked" = "darkgoldenrod2",
+   "2022_raked" = "antiquewhite4",
+   "2023_unraked" = "darkgoldenrod2",
+   "2023_raked" = "antiquewhite4",
+  # If treatments only
+  "unraked" = "darkgoldenrod2", 
+  "raked" = "antiquewhite4",
+  # For shaded years
+  "2021" = "grey",
+  "2022" = "grey",
+  "2023" = "grey",
+  # For species
+  "native_forb" = "cornflowerblue",
+      "exotic_grass" = "coral2",
+      "exotic_forb" = "darkorchid",
+      "native_shrub" = "grey",
+      "native_succulent" = "grey"
+)
+
+
+# Function to calculate convex hulls for plotting
+StatChull <- ggproto("StatChull", Stat,
+                     compute_group = function(data, scales) {
+                       data[chull(data$x, data$y), , drop = FALSE]
+                     },
+                     
+                     required_aes = c("x", "y")
+)
+
+stat_chull <- function(mapping = NULL, data = NULL, geom = "polygon",
+                       position = "identity", na.rm = FALSE, show.legend = NA, 
+                       inherit.aes = TRUE, ...) {
+  layer(
+    stat = StatChull, data = data, mapping = mapping, geom = geom, 
+    position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+    params = list(na.rm = na.rm, ...)
+  )
+}
+```
+
+## Non-metric Multidimensional Scaling (NMDS)
+
+Notes on NMDS.
+
+```{r}
+##   1. distance. Calculate a dissimilarity matrix. The default is Bray-Curtis dissimilarity, and because we did not specify, that is what was used here. Any other dissimilarity index in vegdist can be used using the argument distance. 
+##   2. K the number of dimensions
+##   3. NMDS with random starts. NMDS gets easily trapped into local optima, so it is important to start
+##      NMDS several times from random starts to be confident that you have found the global solution.
+##      metaMDS starts NMDS from several random starts (minimum number is given by try and
+##      maximum number by trymax). If a solution is better (has lower stress) than the previous best, it is
+##      taken as the new standard. Procrustes analysis compares two solutions, and if they are similar
+##      (small residuals) they are considered convergent (indicating a global solution). If you want to be
+##      more certain of reaching a global solution, you can compare results from several independent runs.
+##   4. There is an older alternative NMDS engine (isoMDS in the MASS package), but it does not have
+##      several random starts; for this reason, monoMDS (default in metaMDS) is preferable.
+##   5. autoTransform. The function will perform a Wisconsin double standardization (wisconsin) if data
+##      maximum values are >9, and if the values are very large (>50), a square-root transformation
+##      (sqrt). If you want to have full control over data transformations (you should, and particularly
+##      should if you have data types other than typical community data) you can set
+##      autotransformation=FALSE. In this case we just ran, the maximum data values did not trigger
+##      transformations but if would be listed here it they did.
+##   6. The last step in metaMDS is that species scores are added to the final solution. Remember the
+##      dissimilarity matrix is based on similarity across sample units. Species scores are weighted
+##      averages using function wascores. These are helpful to include in visual representations of the NMDS.
+
+## You saw each iteration of the NMDS until a solution is reached (i.e., stress was minimized after
+## some number of reconfiguration of the points in 2 dimensions). You can increase the number of default
+## runs (each at a random starting point) using the argument "trymax=##"
+
+# chrrp.nmds = metaMDS(comp2, k=2, trymax=25)
+
+## The results list the stress value 
+## Generally, stress < 0.05 provides an excellent representation in reduced dimensions, 
+## < 0.1 is great, < 0.2 is good, and stress > 0.3 provides a poor representation. 
+## You always should report the stress of a NMDS, as it is important for readers to interpret your analysis.
+
+## Let's examine a Shepard plot, which shows scatter around the regression between the interpoint
+## distances in the final configuration (distances between each pair of communities) against their original
+## dissimilarities. The stress of this analysis indicates a pretty good representation and the Shepard plot confirms.
+```
+
+### NMDS for overall composition.
+
+```{r}
+overall_comp_nmds <- metaMDS(overall_comp_mat, k=2)
+overall_comp_nmds
+
+stressplot(overall_comp_nmds)
+
+plot(overall_comp_nmds, type="t")
+
+treatment <- overall_comp_df %>% 
+  dplyr::select(year, treatment) %>%
+  unite(year_treatment, year, treatment, sep = "_") %>%
+  as.vector()
+
+ordiplot(overall_comp_nmds, type = "points")
+with (treatment, ordihull(overall_comp_nmds, year_treatment, col="blue", lwd=2, label=TRUE))
+```
+
+### Plot NMDS
+
+```{r}
+# Extract NMDS scores for plots
+NMDS1_plots = scores(overall_comp_nmds, choices=c(1), display=c("sites"))
+NMDS2_plots = scores(overall_comp_nmds, choices=c(2), display=c("sites"))
+
+# Make df with NMDS scores and plot info
+overall_comp_nmds_plots_df <- data.frame(NMDS1_plots, NMDS2_plots) %>%
+  rownames_to_column("plot_info") %>%
+  separate(col = plot_info, into = c("plot", "year", "treatment"), sep = "in", remove = FALSE) %>%
+  unite(year_treatment, year, treatment, sep = "_", remove = FALSE)
+overall_comp_nmds_plots_df
+
+```
+
+```{r}
+# Now visualize the NMDS with the plots labeled
+nmds_plot <- ggplot(overall_comp_nmds_plots_df, aes(x = NMDS1, y = NMDS2, color = year_treatment,
+                                              fill = year_treatment)) +
+  geom_point(stroke = 0.5, size = 3, shape = 21, color = "black", alpha = 0.5) +
+  facet_wrap("year") +
+  labs(fill = "treatment", color = "treatment") +
+  theme_bw() +
+  scale_color_manual(values = treatment_groups_color_map) +
+  scale_fill_manual(values = treatment_groups_color_map) + 
+  theme(legend.position = "right") +
+  geom_text_repel(aes(label = plot), size = 3)
+nmds_plot
+```
+
+Examine possible causes for the tails.
+
+```{r}
+overall_comp_df %>%
+  filter(BROMAD > 0.05) %>%
+  ggplot(aes(x = plot, y = BROMAD)) +
+  geom_col() +
+  facet_wrap("year")
+
+overall_comp_df %>%
+  filter(AMSMEN > 0.05) %>%
+  ggplot(aes(x = plot, y = BRATOR)) +
+  geom_col() +
+  facet_wrap("year")
+```
+### Final NMDS figure
+
+```{r}
+# Calculate species abundance across all years
+species_mean_abundance <- overall_comp_mat %>%
+  colMeans() %>%
+  data.frame(species = names(.), mean_abundance = .)
+
+species_mean_abundance
+
+# Extract NMDS scores for SPECIES
+overall_NMDS1_sp = scores(overall_comp_nmds, choices=c(1), display=c("species"))
+overall_NMDS2_sp = scores(overall_comp_nmds, choices=c(2), display=c("species"))
+
+overall_nmds_sp_df <- data.frame(overall_NMDS1_sp, overall_NMDS2_sp) %>%
+  rownames_to_column("species") %>%
+  left_join(species_list, by = c("species" = "hexcode")) %>%
+  unite(species_group, provenance, growth_form, remove = FALSE) %>%
+  # Add indicator species information
+  left_join(indicator_species_for_raked_df, by = "species") %>%
+  mutate_at(vars(species, indicator), ~ifelse(is.na(.), "", as.character(.))) %>%
+  mutate(species_with_indicator = paste(species, indicator, sep = "")) %>%
+  # Add species abundance information
+  left_join(species_mean_abundance, by = "species")
+
+head(overall_nmds_sp_df )
+```
+
+
+```{r}
+# Calculate means and standard errors for NMDS scores for plots by treatment
+overall_comp_nmds_summary_df <- overall_comp_nmds_plots_df %>%
+  group_by(year, treatment, year_treatment) %>%
+  summarise(
+    meanNMDS1 = mean(NMDS1),
+    meanNMDS2 = mean(NMDS2),
+    seNMDS1 = sd(NMDS1)/sqrt(length(NMDS1)),
+    seNMDS2 = sd(NMDS2)/sqrt(length(NMDS2)),
+    n = length(NMDS1)
+  )
+overall_comp_nmds_summary_df
+```
+
+Final plot.
+
+
+```{r}
+# Write as function to re-use later
+
+plot_nmds <- function(
+    nmds_plot_means,
+    nmds_plot_values,
+    nmds_species_values,
+    stress) {
+  
+  # Format title
+  
+  stress_chr <- stress %>%
+    round(digits = 3) %>%
+    as.character()
+
+  plot_title <- paste("Stress =", stress_chr, sep = " ")
+
+  p <- ggplot() +
+    scale_shape_manual(values = c(21, 24, 22),
+                       guide = guide_legend(override.aes = list(
+                         color = "black", fill = "black"
+                       ))) +
+    # Plot NMDS scores for each individual plot with lines connecting them
+    scale_color_manual(values = my_color_map) +
+    scale_fill_manual(values = my_color_map) +
+    # Connect plots across years if not facetting
+    # geom_path(
+    #   data = nmds_plot_values,
+    #   inherit.aes = FALSE,
+    #   aes(
+    #     x = NMDS1,
+    #     y = NMDS2,
+    #     group = plot,
+    #     color = treatment
+    #   ),
+    #   alpha = 0.2,
+    #   linewidth = 0.3,
+    #   linetype = "solid",
+    #   arrow = arrow(
+    #     angle = 20,
+    #     type = "open",
+    #     length = unit(0.2, "cm")
+    #   )
+    # ) +
+    geom_point(
+      data = nmds_plot_values,
+      inherit.aes = FALSE,
+      aes(
+        x = NMDS1,
+        y = NMDS2,
+        color = year_treatment,
+        fill = year_treatment,
+        shape = year
+      ),
+      size = 1,
+      alpha = 0.4
+    ) +
+    # Add convex hulls for treatments
+    stat_chull(
+      data = nmds_plot_values,
+      inherit.aes = FALSE,
+      aes(
+        x = NMDS1,
+        y = NMDS2,
+        group = year,
+        fill = year
+      ),
+      alpha = 0.2
+    ) +
+    # Connect means across groups if not facetting
+    # geom_path(
+    #   data = nmds_plot_means,
+    #   aes(x = meanNMDS1,
+    #       y = meanNMDS2,
+    #       group = treatment),
+    #   color = "black",
+    #   linewidth = 0.6,
+    #   linetype = 1,
+    #   alpha = 1
+    # ) +
+    geom_errorbar(
+      data = nmds_plot_means,
+      aes(
+        x = meanNMDS1,
+        ymin = (meanNMDS2 - seNMDS2),
+        ymax = (meanNMDS2 + seNMDS2),
+        width = 0.025
+      ),
+      color = "black"
+    ) +
+    geom_errorbarh(
+      data = nmds_plot_means,
+      aes(
+        y = meanNMDS2,
+        xmin = (meanNMDS1 - seNMDS1),
+        xmax = (meanNMDS1 + seNMDS1),
+        height = 0.025
+      ),
+      color = "black"
+    ) +
+    geom_point(
+      data = nmds_plot_means,
+      aes(
+        x = meanNMDS1,
+        y = meanNMDS2,
+        fill = treatment,
+        shape = year
+      ),
+      size = 3,
+      alpha = 1,
+      color = "black"
+    ) +
+    # Add NMDS scores for the species
+    geom_text(
+      data = nmds_species_values,
+      inherit.aes = FALSE,
+      aes(
+        x = NMDS1,
+        y = NMDS2,
+        label = species_with_indicator,
+        color = species_group,
+        size = mean_abundance
+      ),
+      show.legend = TRUE
+    ) +
+    scale_size(range = c(2, 4)) +
+    # THEME MODIFICATIONS
+    geom_vline(xintercept = 0,
+               linetype = "dashed",
+               size = 0.2) +
+    geom_hline(yintercept = 0,
+               linetype = "dashed",
+               size = 0.2) +
+    theme_publication() +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none",
+      plot.title = element_text(size = 12)
+    ) +
+    xlab("NMDS Axis 1") +
+    ylab("NMDS Axis 2") +
+    # Add stress value
+    labs(title = plot_title) +
+    facet_wrap("year", nrow = 2, ncol = 2, scales = "fixed")
+  # scale_x_continuous(limits = c(-1.4, 1.4)) +
+  # scale_y_continuous(limits = c(-0.8, 0.8))
+
+return(p)
+  
+}
+```
+
+```{r}
+p_overall_comp_nmds <- plot_nmds(
+  nmds_plot_means = overall_comp_nmds_summary_df,
+  nmds_plot_values = overall_comp_nmds_plots_df,
+  nmds_species_values = overall_nmds_sp_df,
+  stress = overall_comp_nmds$stress
+)
+
+p_overall_comp_nmds
+```
+
+```{r}
+# Save figure
+ggsave(
+  "analyses_manuscript/figures/final_manuscript_figures/fig_4_overall_comp_nmds.png",
+  plot = p_overall_comp_nmds,
+  device = "png",
+  height = 10,
+  width = 14,
+  units = "in",
+  scale = 0.6,
+  dpi = 300
+)
+
+ggsave(
+  "analyses_manuscript/figures/final_manuscript_figures/fig_4_overall_comp_nmds.pdf",
+  plot = p_overall_comp_nmds,
+  device = "pdf",
+  height = 10,
+  width = 14,
+  units = "in",
+  scale = 0.6,
+  dpi = 300
+)
+```
+
+```{r}
+# Export list
+overall_nmds_species_names <- overall_nmds_sp_df %>%
+  filter(indicator == "*") %>%
+  dplyr::select(species, species.name)
+overall_nmds_species_names
+
+write.xlsx(
+  overall_nmds_species_names,
+  file = "analyses_manuscript/figures/overall_nmds_species_names.xlsx"
+)
+
+overall_nmds_sp_df %>%
+  filter(indicator != "*") %>%
+  dplyr::select(species, species.name)
+```
+
+### Multivariate tests
+
+```{r}
+test_composition <- function(composition_mat,
+                             composition_df) {
+  
+  # Test results
+  test_results <- list()
+  
+  # PERMANOVA ----
+  
+  # Extract treatment info as vectors
+  treatment_groups <- composition_df %>%
+    pull(year_treatment) %>%
+    as.factor()
+  
+  # PERMANOVA year*treatment overall
+  years <- composition_df %>%
+    pull(year) %>%
+    as.factor()
+  
+  treatments <- composition_df %>%
+    pull(treatment) %>%
+    as.factor()
+  
+  # Test for location effects across the year/treatment groups
+  permanova_groups <- adonis2(composition_mat ~ treatment_groups, permutations = 999, method = "bray")
+  test_results[["permanova_test_for_groups"]] <- permanova_groups
+  print(permanova_groups)
+  
+  permanova_groups_pval <- permanova_groups[['Pr(>F)']][[1]]
+  test_results[["permanova_test_for_groups_pval"]] <- permanova_groups_pval
+
+  # Test for location effects for the treatment by year interaction
+  permanova_int <- adonis2(composition_mat ~ treatments*years, permutations = 999, method = "bray")
+  test_results[["permanova_test_for_year_by_treatment_interaction"]] <- permanova_int
+  
+  permanova_int_pval <- permanova_int[['Pr(>F)']][[3]]
+  test_results[["permanova_test_for_year_by_treatment_interaction_pval"]] <- permanova_int_pval
+
+  # Run betadisper to test for dispersion effects ----
+
+  compDS <- vegdist(composition_mat, method = "bray") # first calculate dissimilarity matrix
+  disper <- betadisper(compDS, treatment_groups) # ignore the error messages
+  test_results[["beta_dispersion"]] <- disper
+  print(disper)
+
+  # Test for differences in beta dispersion (significant differences in homogeneities can be tested using either parametric or permutational tests, and parametric post hoc contrasts can also be investigated)
+  disper_test <- permutest(disper)
+  test_results[["beta_dispersion_permutation_test"]] <- disper_test
+  print(disper_test)
+  
+  disper_test_pval <- disper_test[['tab']][['Pr(>F)']][[1]]
+  test_results[["beta_dispersion_permutation_test_pval"]] <- disper_test_pval
+  
+  # INDICATOR SPECIES ANALYSIS ----
+  
+  # For year-treatment groups
+  treatment_groups <- composition_df %>%
+    pull(year_treatment) %>%
+    as.factor()
+  
+  indic <- multipatt(composition_mat, treatment_groups, func="IndVal.g", duleg=TRUE, control = how(nperm=999))
+  print(summary(indic, alpha = 1))
+  test_results[["indicator_species_analysis_for_treatment_groups"]] <- capture.output(summary(indic, alpha = 1))
+  
+  # Within years, among treatments
+  selected_years <- c("2022", "2023")
+  for (a_year in selected_years) {
+
+    comp_in_year <- data.frame(
+                               plot_info = row.names(composition_mat),
+                               composition_mat) %>%
+      separate(plot_info, into = c("plot", "year", "treatment"), sep = "in") %>%
+      mutate(year = as.factor(year)) %>%
+      filter(year == a_year)
+
+    print(head(comp_in_year))
+
+    comp <- comp_in_year %>%
+      dplyr::select(where(is.numeric)) %>%
+      as.matrix()
+
+    treatments_within_years <- comp_in_year %>%
+      pull(treatment)
+
+    indic <- multipatt(
+      comp,
+      cluster = treatments_within_years,
+      func="IndVal.g", duleg=TRUE,
+      control = how(nperm=999))
+    print(summary(indic, alpha = 1))
+
+    indic_test_name <- paste("indicator_species_analysis_for", a_year, sep = "_" )
+    test_results[[indic_test_name]] <- capture.output(summary(indic, alpha = 1))
+  }
+  
+  # Across 2022 and 2023 data together, clusters within treatments
+  treatment_years_only_comp <- data.frame(
+                               plot_info = row.names(composition_mat),
+                               composition_mat) %>%
+    separate(plot_info, into = c("plot", "year", "treatment"), sep = "in") %>%
+    mutate(year = as.factor(year)) %>%
+    filter(year == "2023" | year == "2022")
+
+  treatments_for_treatment_years <- treatment_years_only_comp %>% pull(treatment)
+
+  comp_for_treatment_years <- treatment_years_only_comp %>%
+      dplyr::select(where(is.numeric)) %>%
+      as.matrix()
+
+  indic_treatment_years <- multipatt(comp_for_treatment_years,
+                                     treatments_for_treatment_years,
+                                     func="IndVal.g", duleg=TRUE,
+                                     control = how(nperm=999))
+  print(summary(indic_treatment_years, alpha = 1))
+  
+  test_results[["indicator_species_analysis_for_treatment_years_only"]] <- capture.output(summary(indic_treatment_years, alpha = 1))
+  
+  return(test_results)
+}
+
+
+```
+
+
+```{r}
+overall_comp_tests <- test_composition(composition_mat = overall_comp_mat,
+                 composition_df = overall_comp_df)
+```
+
+```{r}
+overall_comp_results <- capture.output(overall_comp_tests)
+
+write_lines(overall_comp_results, 
+            "analyses_manuscript/stats_results/overall_composition_multivariate_test_results.txt", append = FALSE, sep = "\n")
+
+```
+
+## NMDS for native species composition
+
+```{r}
+native_comp_nmds <- metaMDS(native_comp_mat, k=2)
+native_comp_nmds
+
+stressplot(native_comp_nmds)
+
+plot(native_comp_nmds, type="t")
+
+treatment_native_plots <- native_comp_df  %>%
+  dplyr::select(year_treatment)
+
+ordiplot(native_comp_nmds, type = "points")
+with (treatment_native_plots, ordihull(native_comp_nmds, year_treatment, col="blue", lwd=2, label=TRUE))
+```
+
+### Plot NMDS
+
+
+```{r}
+# Extract NMDS scores for plots
+native_NMDS1_plots = scores(native_comp_nmds, choices=c(1), display=c("sites"))
+native_NMDS2_plots = scores(native_comp_nmds, choices=c(2), display=c("sites"))
+
+# Make df with NMDS scores and plot info
+native_comp_nmds_plots_df <- data.frame(native_NMDS1_plots, native_NMDS2_plots) %>%
+  rownames_to_column("plot_info") %>%
+  separate(col = plot_info, into = c("plot", "year", "treatment"), sep = "in", remove = FALSE) %>%
+  unite(year_treatment, year, treatment, sep = "_", remove = FALSE)
+head(native_comp_nmds_plots_df)
+
+```
+
+```{r}
+# Now visualize the NMDS with the plots labeled
+native_nmds_plot <- ggplot(native_comp_nmds_plots_df, aes(x = NMDS1, y = NMDS2, color = year_treatment,
+                                              fill = year_treatment)) +
+  geom_point(stroke = 0.5, size = 3, shape = 21, color = "black", alpha = 0.5) +
+  facet_wrap("year") +
+  labs(fill = "treatment", color = "treatment") +
+  theme_bw() +
+  scale_color_manual(values = treatment_groups_color_map) +
+  scale_fill_manual(values = treatment_groups_color_map) + 
+  theme(legend.position = "right") +
+  geom_text_repel(aes(label = plot), size = 3)
+native_nmds_plot
+```
+
+### Final native NMDS figure
+
+```{r}
+# Extract NMDS scores for SPECIES
+native_NMDS1_sp = scores(native_comp_nmds, choices=c(1), display=c("species"))
+native_NMDS2_sp = scores(native_comp_nmds, choices=c(2), display=c("species"))
+
+native_nmds_sp_df <- data.frame(native_NMDS1_sp, native_NMDS2_sp) %>%
+  rownames_to_column("species") %>%
+  left_join(species_list, by = c("species" = "hexcode")) %>%
+  unite(species_group, provenance, growth_form, remove = FALSE) %>%
+  left_join(indicator_species_for_raked_df, by = "species") %>%
+  mutate_at(vars(species, indicator), ~ifelse(is.na(.), "", as.character(.))) %>%
+  mutate(species_with_indicator = paste(species, indicator, sep = "")) %>%
+  # Add species abundance information
+  left_join(species_mean_abundance, by = "species")
+
+head(native_nmds_sp_df)
+```
+
+```{r}
+# Calculate means and standard errors for NMDS scores for plots by treatment
+native_comp_nmds_summary_df <- native_comp_nmds_plots_df %>%
+  group_by(year, treatment, year_treatment) %>%
+  summarise(
+    meanNMDS1 = mean(NMDS1),
+    meanNMDS2 = mean(NMDS2),
+    seNMDS1 = sd(NMDS1)/sqrt(length(NMDS1)),
+    seNMDS2 = sd(NMDS2)/sqrt(length(NMDS2)),
+    n = length(NMDS1)
+  )
+native_comp_nmds_summary_df
+```
+
+
+```{r}
+p_native_comp_nmds <- plot_nmds(
+  nmds_plot_means = native_comp_nmds_summary_df,
+  nmds_plot_values = native_comp_nmds_plots_df,
+  nmds_species_values = native_nmds_sp_df,
+  stress = native_comp_nmds$stress
+)
+
+p_native_comp_nmds
+```
+
+```{r}
+# Save figure
+ggsave(
+  "analyses_manuscript/figures/native_comp_nmds.pdf",
+  plot = p_native_comp_nmds,
+  device = "pdf",
+  height = 6,
+  width = 14,
+  units = "in",
+  scale = 0.8,
+  dpi = 800
+)
+```
+
+### Multivariate tests
+
+```{r}
+native_comp_tests <- test_composition(composition_mat = native_comp_mat,
+                 composition_df = native_comp_df)
+
+```
+
+```{r}
+native_comp_results <- capture.output(native_comp_tests)
+
+write_lines(native_comp_results, 
+            "analyses_manuscript/stats_results/native_composition_multivariate_test_results.txt", append = FALSE, sep = "\n")
+```
+  

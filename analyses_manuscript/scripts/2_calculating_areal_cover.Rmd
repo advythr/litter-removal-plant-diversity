@@ -1,0 +1,127 @@
+---
+title: "Calculating areal cover"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+
+## Import data
+
+```{r}
+long_data <- read.csv("analyses_manuscript/processed_data/long_data.csv") %>%
+  mutate(year = as.factor(year),
+         plot = as.character(plot),
+         treatment = as.factor(treatment))
+
+species_list_df <- read.csv("analyses_manuscript/raw_data/20230918_CHRRP_species_list.csv") %>%
+  unite(species_group, provenance, growth_form, sep = "_")
+```
+
+## Calculate areal cover
+
+```{r}
+# Calculate areal cover for species
+
+species_cover_data <- long_data %>%
+  left_join(species_list_df, by = c("species_code" = "hexcode")) %>%
+  # Collect only the species groups at each point
+  distinct() %>%
+  # Remove non-plant hits
+  filter(species_code != 'LIT') %>%
+  filter(species_code != 'BG') %>%
+  # For every plot in each year, and every species, calculate the areal cover
+  group_by(year, plot, treatment, species_code) %>%
+  summarise(
+    cover = n()
+  )
+  
+```
+
+```{r}
+# Divide all hit values by 90 (the total number of points sampled) to get areal cover
+species_cover_wide <- species_cover_data %>%
+  # Convert into proportion
+  mutate(
+    cover = cover / 90 # 90 points per plot
+  ) %>%
+  mutate(species_code = paste(species_code, "_cover", sep = "")) %>%
+  pivot_wider(
+    id_cols = c("year", "plot", "treatment"),
+    names_from = species_code,
+    values_from = cover,
+    values_fill = 0
+  )
+species_cover_wide
+```
+
+## Calculate areal cover for species groups
+
+This will treat all species as part of the groups.
+
+```{r}
+species_groups_cover_data <- long_data %>%
+  left_join(species_list_df, by = c("species_code" = "hexcode")) %>%
+  # Collect only the species groups at each point
+  distinct() %>%
+  # Remove non-plant hits
+  filter(species_code != 'LIT') %>%
+  filter(species_code != 'BG') %>%
+  # For every transect point, ignore multiple hits of species from the same group
+  distinct(year, plot, treatment, transect, point, species_group) %>%
+  # For every plot in each year, and every species, calculate the areal cover
+  group_by(year, plot, treatment, species_group) %>%
+  summarise(
+    cover = n()
+  ) %>%
+  # Since we technically sample Present species ("P"), remove any present hits that cause the cover to be above 90
+  mutate(
+    cover = ifelse(cover > 90, 
+                   cover - 1, 
+                   cover)
+  )
+species_groups_cover_data
+```
+
+```{r}
+species_groups_cover_wide <- species_groups_cover_data %>%
+# Convert into proportion
+  mutate(
+    cover = cover / 90 # 90 points per plot
+  ) %>%
+  mutate(species_code = paste(species_group, "_cover", sep = "")) %>%
+  pivot_wider(
+    id_cols = c("year", "plot", "treatment"),
+    names_from = species_code,
+    values_from = cover,
+    values_fill = 0
+  )
+species_groups_cover_wide
+```
+
+```{r}
+cover_data <- species_cover_wide %>%
+  full_join(species_groups_cover_wide, by = c('year', 'plot', 'treatment'))
+```
+
+## Export
+
+```{r}
+write.csv(
+  cover_data,
+  file = "analyses_manuscript/processed_data/areal_cover_variables.csv",
+  row.names = FALSE
+)
+```
+

@@ -1,0 +1,208 @@
+---
+title: "Data exploration"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lattice)
+library(rstatix)
+library(fitdistrplus)
+library(ggpubr)
+
+```
+
+
+## Import data
+
+```{r}
+analysis.df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year))
+```
+
+## Data exploration
+
+Following Zuur 2010, I follow the 8 step protocol for data exploration for all of the response variables.
+
+```{r}
+explore_data <- function(rv, df){
+  
+  print(rv)
+  
+  rv_vec <- df[[rv]]
+  # print(rv_vec)
+  
+  # Step 1: Check for outliers
+
+  print(dotchart(rv_vec, xlab = rv,
+         ylab = "Order of the data"))
+
+  # Step 2: Check for homogeneity of variance
+
+  cond_boxplot <- df %>%
+    ggplot(aes_string(x = "treatment", y = rv, fill = "treatment")) +
+    facet_wrap("year") +
+    geom_boxplot()
+  
+  print(cond_boxplot)
+
+  # Step 3: Check if data are normally distributed
+    
+  if (is.integer(rv_vec) == TRUE) {
+    binsize = 1
+  } else {
+    binsize = 0.05
+  }
+
+  hist_plot <- df %>%
+    ggplot(aes_string(x = rv)) +
+    facet_wrap(treatment ~ year) +
+    geom_histogram(binwidth = binsize, fill="white", color="black")
+  
+  print(hist_plot)
+
+  # Test normality for richness using Shapiro-Wilk Test for each group
+  var_test <- rlang::sym(rv)
+  
+  normality_test <- df %>%
+    group_by(year_treatment) %>%
+    shapiro_test(vars = var_test)
+
+  print(normality_test)
+  # p < 0.05 means the data is NOT normal
+
+  # Use fitdistrplus to fit multiple distributions
+  
+  if (is.integer(rv_vec) == TRUE) {
+    
+    # Fit multiple distributions
+    fp <- fitdist(rv_vec, "pois")
+    fnb <- fitdist(rv_vec, "nbinom")
+    fn <- fitdist(rv_vec, "norm")
+    
+    dens_plot <- denscomp(list(fp, fnb, fn), plotstyle = "ggplot")
+    qq_plot <- qqcomp(list(fp, fnb, fn), plotstyle = "ggplot")
+    cdf_plot <- cdfcomp(list(fp, fnb, fn), plotstyle = "ggplot")
+    
+    print(descdist(rv_vec, discrete = TRUE, boot=1000))
+    
+  } else {
+    
+    # Fit a normal distribution only
+    fn <- fitdist(rv_vec, "norm")
+    dens_plot <- denscomp(fn, plotstyle = "ggplot")
+    qq_plot <- qqcomp(fn, plotstyle = "ggplot")
+    cdf_plot <- cdfcomp(fn, plotstyle = "ggplot")
+    
+    print(descdist(rv_vec, discrete = FALSE, boot=1000))
+    
+  }
+  
+  distr_plots <- ggarrange(dens_plot, qq_plot, cdf_plot,
+                           ncol = 2, nrow = 2)
+  
+  distr_plots_t = annotate_figure(distr_plots,
+                  top = rv)
+
+  print(distr_plots_t)
+  
+  # print(descdist(rv_vec, discrete = T, boot=1000))
+
+  # Step 4: Are there lots of zeros in the data?
+  plot(table(rv_vec),
+    type = "h",
+    xlab = "Observed values",
+    ylab = "Frequency")
+  abline(v = 0, col = "red", lty = 2, lwd = 1)
+
+  # Step 5: Is there co-linearity among the covariates?
+
+    # I will use VIF after model fitting to check for this
+
+  # Step 6: What are the relationships between Y and X variables?
+
+   years_boxplot <- df %>%
+    ggplot(aes_string(x = "year", y = rv, fill = "year")) +
+    geom_boxplot() +
+    facet_grid("treatment") +
+    ylab(rv)
+   
+  print(years_boxplot)
+
+  # Step 7: Should we consider interactions?
+
+  # Biplots with lit
+
+  lit_covar_plot <- df %>%
+    ggplot(aes_string(x = "LIT", y = rv)) +
+    facet_grid(treatment ~ year) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE)
+
+  print(lit_covar_plot)
+
+  # Step 8: Are observations of the response variable independent?
+  
+  plots_variability_plot <- df %>%
+    ggplot(aes_string(x = "plot", y = rv, color = "treatment")) +
+    #facet_grid("treatment") +
+    geom_jitter(width = 0.1, height = 0) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+  blocks_variability_plot <- df %>%
+  ggplot(aes_string(x = "block", y = rv, color = "treatment")) +
+  #facet_grid("treatment") +
+  geom_jitter(width = 0.1, height = 0) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+  rows_boxplot <- df %>%
+  ggplot(aes_string(x = "row", y = rv, fill = "row")) +
+  geom_boxplot() +
+  facet_grid(treatment ~ year) +
+  ylab(rv)
+  
+   
+  ind_plots <- ggarrange(plots_variability_plot, blocks_variability_plot, rows_boxplot,
+                           ncol = 3, nrow = 1)
+  print(ind_plots)
+
+}
+```
+
+Test function.
+
+```{r}
+explore_data(rv = "sprich",
+             df = analysis.df)
+```
+
+
+## Run data exploration
+```{r}
+
+response_variables <-
+  c(
+    "sprich",
+    "sprich_native",
+    "shannon",
+    "shannon_native",
+    "exotic_grass",
+    "exotic_forb",
+    "native_forb"
+  )
+
+for (var in response_variables) {
+  
+  explore_data(rv = var,
+             df = analysis.df)
+}
+```

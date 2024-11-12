@@ -1,0 +1,490 @@
+---
+title: "Single Year Models"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(cowplot)
+library(lme4)
+library(glmmTMB)
+library(car)
+library(emmeans)
+library(stringr)
+library(performance)
+library(purrr)
+library(gridExtra)
+
+# options(scipen = 999)
+```
+
+
+```{r}
+analysis_df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year)) %>%
+  mutate(log_shannon_native = log(shannon_native + 1)) %>%
+  mutate(shannon_native_backtransform = exp(log_shannon_native)-1)
+
+analysis_2022_df <- analysis_df %>%
+  filter(year == "2022")
+  
+analysis_2023_df <- analysis_df %>%
+  filter(year == "2023")
+```
+
+## Function to test models
+
+First, a function to test the model and return the test itself.
+
+```{r}
+test_single_year_model <- function(fitted_model) {
+  
+  model_results <- list()
+  
+  chisqAnova <- car::Anova(fitted_model)
+  print(chisqAnova)
+  model_results[["chisquare_test"]] <- chisqAnova 
+  
+  # Extract p-value for the treatment*year interaction term
+  pval <- chisqAnova$'Pr(>Chisq)'[1]
+  pval.r <- ifelse(
+    pval < 0.001,
+    "< 0.001",
+    round(pval, digits = 3)
+  )
+
+  # Assess significance of p-value
+  significance <- ifelse(pval < 0.05,
+                       "*",
+                       "N.S.")
+  pval_signif <- paste(pval.r, significance, sep = " ")
+  
+  print(pval_signif)
+  model_results[["significance"]] <- pval_signif
+  
+  return(model_results)
+}
+```
+
+Now, a function to save the results to the global environment (every time this function is called, it will also save the results to a list in the global environment).
+
+```{r}
+# Initialize a list to store all model results
+single_year_results_list <- list()
+
+save_model_results <- function(fitted_model, year) {
+  
+  model_results <- test_single_year_model(fitted_model = fitted_model)
+  
+  # Every time this function is called, it will add the results to the list of 
+  # results in the global environment
+  model_name <- deparse(substitute(fitted_model))
+  model_name_with_year <- paste(model_name, year, sep = "_")
+  single_year_results_list[[model_name_with_year]] <<- model_results
+  
+}
+
+```
+
+
+## Function to plot models
+
+```{r}
+plot_single_year_model <- function(fitted_model, year, response_variable, response_name, dataset) {
+
+  # Test the model
+  model_results <- test_single_year_model(fitted_model = fitted_model)
+  
+  significance <- model_results[['significance']]
+  
+  # Calculate position for text label
+  # rv_vec <- analysis_df[[response_variable]]
+  # label_position_x <- 'unraked'
+  # label_position_y <- max(rv_vec) + (max(rv_vec) * 0.05)
+  
+  # Format label
+  significance_label <- paste("p-value:", significance, sep = " ")
+  
+  # Plot title
+  # plot_title <- paste(year, sep = " ")
+  plot_title <- significance_label
+    
+  # Make plot
+  model_plot <- dataset %>%
+    ggplot(aes_string(
+      x = "treatment",
+      y = response_variable,
+      fill = "treatment",
+      color = "treatment",
+      group = "treatment"
+    )) +
+    geom_jitter(
+                alpha = 0.3,
+                shape = 16,
+                width = 0.3,
+                height = 0,
+                size = 3
+                ) +
+    geom_boxplot(color = "black", alpha = 0.4, outlier.shape = NA) +
+    scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+    scale_color_manual(
+      values = c("antiquewhite4", "darkgoldenrod2"),
+      guide = guide_legend(override.aes = list(alpha = 1))
+    ) +
+  labs(title = plot_title) +
+  theme_pubr() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 12)) +
+  ylab(response_name)
+  # geom_text(aes(x = label_position_x,
+  #               y = label_position_y),
+  # label = significance_label,
+  # hjust = 1,
+  # vjust = 1,
+  # size = 3,
+  # color = "black")
+
+  return(model_plot)
+}
+
+```
+
+# Individual year models
+
+### Species richness
+
+```{r}
+fit_sprich <- function(dataset, year) {
+  
+  sprich_fm <- glmer(sprich ~ treatment + (1 | block),
+                     family = "poisson",
+                     data = dataset)
+  
+  save_model_results(sprich_fm, year)
+  
+  p <- plot_single_year_model(
+    fitted_model = sprich_fm,
+    year = year,
+    response_variable = "sprich",
+    response_name = "Species richness",
+    dataset = dataset
+  )
+  
+  return(p)
+}
+
+```
+
+
+```{r}
+p_sprich_2022 <- fit_sprich(dataset = analysis_2022_df, year = "2022")
+p_sprich_2023 <- fit_sprich(dataset = analysis_2023_df, year = "2023")
+```
+
+### Native species richness
+
+```{r}
+fit_sprich_native <- function(dataset, year) {
+  
+  sprich_native_fm <- glmer(sprich_native ~ treatment + (1 | block),
+                     family = "poisson",
+                     data = dataset)
+  
+  save_model_results(sprich_native_fm, year)
+  
+  p <- plot_single_year_model(
+    fitted_model = sprich_native_fm,
+    year = year,
+    response_variable = "sprich_native",
+    response_name = "Native species richness",
+    dataset = dataset
+  )
+  
+  return(p)
+}
+
+```
+
+```{r}
+p_sprich_native_2022 <- fit_sprich_native(dataset = analysis_2022_df, year = "2022")
+p_sprich_native_2023 <- fit_sprich_native(dataset = analysis_2023_df, year = "2023")
+```
+
+
+```{r}
+fit_shannon <- function(dataset, year) {
+  
+  shannon_fm <- lmer(shannon ~ treatment + (1|block),
+                   data = dataset)
+  
+  save_model_results(shannon_fm, year)
+  
+  p <- plot_single_year_model(
+    fitted_model = shannon_fm,
+    year = year,
+    response_variable = "shannon",
+    response_name = "Shannon diversity",
+    dataset = dataset
+  )
+
+  return(p)
+}
+```
+
+```{r}
+p_shannon_2022 <- fit_shannon(dataset = analysis_2022_df, year = "2022")
+p_shannon_2023 <- fit_shannon(dataset = analysis_2023_df, year = "2023")
+```
+
+### Shannon Native
+
+```{r}
+fit_shannon_native <- function(dataset, year) {
+  
+  shnat_fm <- glmmTMB(log_shannon_native ~ treatment + (1|block),
+                        ziformula=~1,
+                        data = dataset,
+                        family = beta_family())
+  
+  save_model_results(shnat_fm, year)
+  
+  p <- plot_single_year_model(
+    fitted_model = shnat_fm,
+    year = year,
+    response_variable = "shannon_native",
+    response_name = "Native Shannon diversity",
+    dataset = dataset
+  )
+
+  return(p)
+}
+```
+
+```{r}
+p_shannon_native_2022 <- fit_shannon_native(dataset = analysis_2022_df, year = "2022")
+p_shannon_native_2023 <- fit_shannon_native(dataset = analysis_2023_df, year = "2023")
+```
+
+### Exotic forb
+
+```{r}
+fit_exotic_forb <- function(dataset, year) {
+  
+  ef_fm <- glmmTMB(exotic_forb ~ treatment + (1|block),
+                        ziformula=~1,
+                        data = dataset,
+                        family= beta_family()
+                   )
+  
+  save_model_results(ef_fm, year)
+  
+  p <- plot_single_year_model(
+    fitted_model = ef_fm,
+    year = year,
+    response_variable = "exotic_forb",
+    response_name = "Exotic forb abundance",
+    dataset = dataset
+  )
+
+  return(p)
+}
+```
+
+```{r}
+p_exotic_forb_2022 <- fit_exotic_forb(dataset = analysis_2022_df, year = "2022")
+p_exotic_forb_2023 <- fit_exotic_forb(dataset = analysis_2023_df, year = "2023")
+```
+
+### Native forb
+
+```{r}
+fit_native_forb <- function(dataset, year) {
+  
+  nf_fm <- glmmTMB(native_forb ~ treatment + (1|block),
+                        ziformula=~1,
+                        data = dataset,
+                        family= beta_family()
+)
+  
+  save_model_results(nf_fm, year)
+  
+  p <- plot_single_year_model(
+    fitted_model = nf_fm,
+    year = year,
+    response_variable = "native_forb",
+    response_name = "Native forb abundance",
+    dataset = dataset
+  )
+
+  return(p)
+}
+```
+
+```{r}
+p_native_forb_2022 <- fit_native_forb(dataset = analysis_2022_df, year = "2022")
+p_native_forb_2023 <- fit_native_forb(dataset = analysis_2023_df, year = "2023")
+```
+
+## Format and export plots
+
+```{r}
+arrange_plots <- function(title, plots_list, ymin, ymax) {
+  
+  plots_adjusted_list <- list()
+
+    for (plot_name in names(plots_list)) {
+    
+    plot <- plots_list[[plot_name]]
+    plot_adj <- plot + ylim(min = ymin, max = ymax)
+    
+    plots_adjusted_list[[plot_name]] <- plot_adj
+}
+  return(plots_adjusted_list)
+  
+}
+```
+
+
+```{r}
+sprich_as_unit_plots <- list(
+  p_sprich_2022 = p_sprich_2022,
+  p_sprich_2023 = p_sprich_2023,
+  p_sprich_native_2022 = p_sprich_native_2022,
+  p_sprich_native_2023= p_sprich_native_2023)
+
+sprich_as_unit_plots_adj <- arrange_plots(
+  title = "Species richness",
+  plots_list = sprich_as_unit_plots, ymin = 0, ymax = 14)
+
+sprich_as_unit_plots_adj
+
+shannon_as_unit_plots <- list(
+  p_shannon_2022 = p_shannon_2022,
+  p_shannon_2023= p_shannon_2023,
+  p_shannon_native_2022 = p_shannon_native_2022,
+  p_shannon_native_2023 =  p_shannon_native_2023)
+
+shannon_as_unit_plots_adj <- arrange_plots(
+  title = "Shannon diversity",
+  plots_list = shannon_as_unit_plots, ymin = 0, ymax = 2)
+
+shannon_as_unit_plots_adj
+
+abundance_as_unit_plots <- list(
+  p_exotic_forb_2022 = p_exotic_forb_2022,
+  p_exotic_forb_2023 = p_exotic_forb_2023,
+  p_native_forb_2022 = p_native_forb_2022,
+  p_native_forb_2023 = p_native_forb_2023)
+
+abundance_as_unit_plots_adj <- arrange_plots(
+  title = "Abundance",
+  plots_list = abundance_as_unit_plots, ymin = 0, ymax = 1)
+
+abundance_as_unit_plots_adj
+```
+
+```{r}
+plots_by_unit_list <- list(sprich_as_unit_plots_adj,
+shannon_as_unit_plots_adj,
+abundance_as_unit_plots_adj)
+
+all_plots_list <- purrr::flatten(plots_by_unit_list)
+
+names(all_plots_list)
+
+
+```
+
+```{r}
+
+order_plots_for_2022 <- c(
+  "p_sprich_2022", "p_sprich_native_2022", "p_shannon_2022", "p_shannon_native_2022", "p_exotic_forb_2022", "p_native_forb_2022"
+)
+
+order_plots_for_2023 <- c(
+  "p_sprich_2023", "p_sprich_native_2023", "p_shannon_2023", "p_shannon_native_2023", "p_exotic_forb_2023", "p_native_forb_2023"
+)
+
+plots_for_2022 <- all_plots_list[order_plots_for_2022]
+
+plots_for_2023 <- all_plots_list[order_plots_for_2023]
+```
+
+
+```{r}
+plots_combined_2022 <- grid.arrange(grobs = plots_for_2022, ncol = 6, nrow = 1, left = "2022")
+
+plots_combined_2023 <- grid.arrange(grobs = plots_for_2023, ncol = 6, nrow = 1, left = "2023")
+
+arranged_single_year_model_plots <- grid.arrange(plots_combined_2022, plots_combined_2023)
+arranged_single_year_model_plots
+```
+
+```{r}
+ggsave(filename = "arranged_single_year_model_plots.pdf",
+         plot = arranged_single_year_model_plots,
+         path = "analyses_manuscript/figures",
+         width = 14,
+         height = 5,
+          scale = 1.2)
+```
+
+Save the results as a table.
+
+```{r}
+# Save table of significance.
+
+all_results_df <- data.frame(
+  model = character(),
+  predictor = character(),
+  Chisq = numeric(),
+  Df = numeric(), 
+  p_value = numeric()
+)
+
+for (model_name in names(single_year_results_list)) {
+  
+  anova_table <- single_year_results_list[[model_name]][['chisquare_test']]
+  
+  anova_table_formatted <- anova_table %>%
+    rownames_to_column("predictor") %>%
+    rename("p_value" = `Pr(>Chisq)`) %>%
+    mutate(model = model_name) %>%
+    mutate(p_value_f = case_when(
+      p_value < 0.001 ~ "< 0.001",
+      p_value > 0.001 ~ paste(
+        signif(p_value, digits = 2))
+    )) %>%
+    mutate(significance = case_when(
+      p_value < 0.05 ~ "*",
+      p_value > 0.05 ~ "N.S."
+    ))
+  
+  all_results_df <- bind_rows(all_results_df, anova_table_formatted)
+
+}
+
+all_results_df
+  
+```
+
+```{r}
+write.csv(
+  all_results_df,
+  file = "analyses_manuscript/stats_results/single_year_model_results.csv",
+  row.names = FALSE
+)
+```
+

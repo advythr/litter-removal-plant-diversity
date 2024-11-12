@@ -1,0 +1,365 @@
+---
+title: "Litter cover analysis"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries and data
+
+```{r}
+library(tidyverse)
+library(rstatix) # pipe-friendly
+library(ggnewscale)
+library(ggpubr)
+library(performance)
+library(lme4)
+library(sjPlot)
+library(DHARMa)
+
+options(scipen = 5)
+```
+
+```{r}
+load("analyses_manuscript/theme_function.R")
+
+# Color map
+my_color_map <- c( 
+                   "unraked" = "darkgoldenrod2",
+                   "raked" = "antiquewhite4",
+                   "2021_unraked" = "lightblue", 
+                   "2021_raked" = "lightblue", 
+                   "2022_unraked" = "darkgoldenrod2",
+                   "2022_raked" = "antiquewhite4",
+                   "2023_unraked" = "darkgoldenrod2",
+                   "2023_raked" = "antiquewhite4")
+
+```
+
+
+```{r}
+analysis_df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year)) %>%
+  mutate(log_shannon_native = log(shannon_native + 1))
+```
+
+Function for model checking.
+
+```{r}
+check_my_model <- function(fitted_model, dataset) {
+  
+  # Residuals versus fitted
+  
+    tryCatch({
+      print(plot(fitted_model))
+    }, error = function(e) {
+      cat("Error occurred while plotting residuals versus fitted:", e$message, "\n")
+  })
+  
+   # Residual normality
+  print(plot(simulateResiduals(fittedModel = fitted_model)))
+  hist(resid(fitted_model))
+  
+  # Residuals versus covariates
+  
+  boxplot(resid(fitted_model) ~ treatment, data = dataset, ylab = "Normalized residuals")
+  abline(h = 0, lty = 2)
+  
+  boxplot(resid(fitted_model) ~ year, data = dataset, ylab = "Normalized residuals")
+  abline(h = 0, lty = 2)
+  
+  boxplot(resid(fitted_model) ~ block, data = dataset, ylab = "Normalized residuals")
+  abline(h = 0, lty = 2)
+  
+}
+```
+
+## Visualize first
+
+Density plots.
+
+```{r}
+analysis_df %>%
+  ggplot(aes(x=LIT, color = treatment, fill = treatment, groups = year)) +
+  #facet_grid("year", scales = "fixed") +
+  geom_density(alpha = 0.6) +
+  #geom_dotplot() +
+  scale_color_manual(values = my_color_map) +
+  scale_fill_manual(values = my_color_map) +
+  theme_linedraw()
+```
+
+```{r}
+analysis_df %>%
+  ggplot(aes(x=LIT, color = treatment, fill = treatment)) +
+  facet_grid("year", scales = "fixed") +
+  geom_density(alpha = 0.6) +
+  # geom_dotplot(dotsize = 0.3) +
+  scale_color_manual(values = my_color_map) +
+  scale_fill_manual(values = my_color_map) +
+  theme_linedraw()
+```
+
+Histogram.
+
+```{r}
+# Make a histogram to visualize first
+analysis_df %>%
+  ggplot(aes(x = LIT, fill = treatment)) +
+  geom_histogram(binwidth = 0.05) +
+  facet_grid(year ~ treatment) +
+  scale_color_manual(values = my_color_map) +
+  scale_fill_manual(values = my_color_map)
+
+## the data is clearly not normal (it is skewed). Let's investigate further.
+```
+
+Explore the LIT variable
+
+```{r}
+qqnorm(analysis_df$LIT)
+qqline(analysis_df$LIT)
+```
+
+
+```{r}
+# Test for normality using Shapiro-Wilk Test for each group
+analysis_df %>%
+  group_by(year_treatment) %>%
+  shapiro_test(LIT)
+## p < 0.001 means the data is NOT normal. The results of the test match the histograms. Only 2022 raked is normal.
+```
+
+
+```{r}
+# Log transform LIT cover to make it more normal
+analysis_df2 <- analysis_df %>%
+  dplyr::select(-BG) %>% # Since BG is 1-LIT, we don't need it anymore for the analysis)
+  mutate(log_LIT = log10(LIT+0.001)) # we need to add a tiny value because there are zeros and mathematically, the log10 of zero is -infinity
+head(analysis_df2)
+
+# Visualize the new log-transformed data
+analysis_df2 %>%
+  ggplot(aes(x = log_LIT, fill = treatment)) +
+  geom_histogram(binwidth = 0.05) +
+  facet_grid(year ~ treatment) +
+  scale_color_manual(values = my_color_map) +
+  scale_fill_manual(values = my_color_map)
+
+```
+
+```{r}
+# Make QQ plot to visualize normality for the log-transformed data
+qqnorm(analysis_df$LIT) # the original one
+qqline(analysis_df$LIT)
+
+qqnorm(analysis_df2$log_LIT)
+qqline(analysis_df2$log_LIT) # slightly better!
+```
+
+Boxplot for litter cover.
+
+```{r}
+## Make litter cover boxplot
+
+p_lit <- analysis_df %>%
+  ggplot(
+    aes(x = year, y = LIT, fill = treatment, color = treatment)) +
+  geom_jitter(alpha = 0.3, width = 0.3, height = 0, size = 2.5) +
+  scale_color_manual(values = my_color_map) +
+  theme_Publication() +
+  new_scale_color() +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  scale_fill_manual(values = my_color_map) +
+  facet_wrap("treatment") +
+  theme(legend.position = "none") +
+  xlab("year") +
+  ylab("litter cover proportion")
+p_lit
+
+```
+
+```{r}
+supplementary_figs_path <- file.path("analyses_manuscript/figures/supplemental_figures")
+
+ggsave(
+  filename = "fig_S2_litter_cover_by_treatment.pdf",
+  path = supplementary_figs_path,
+  plot = p_lit,
+  device = "pdf",
+  height = 6,
+  width = 10,
+  units = "in",
+  scale = 0.6,
+  dpi = 800
+)
+
+ggsave(
+  filename = "fig_S2_litter_cover_by_treatment.jpg",
+  path = supplementary_figs_path,
+  plot = p_lit,
+  height = 6,
+  width = 10,
+  units = "in",
+  scale = 0.6,
+)
+```
+
+## Statistical tests
+
+### Basic tests
+
+T-tests.
+
+```{r}
+# Were historically raked plots different in litter cover in 2021?
+analysis_df %>%
+  filter(year == "2021") %>%
+  t_test(LIT ~ treatment)
+```
+
+```{r}
+# Did raking reduce litter abundance among treatments in 2022?
+analysis_df %>%
+  filter(year == "2022") %>%
+  t_test(LIT ~ treatment)
+```
+
+```{r}
+# Did raking reduce litter abundance among treatments in 2023?
+analysis_df %>%
+  filter(year == "2023") %>%
+  t_test(LIT ~ treatment)
+```
+
+ANOVA.
+
+```{r}
+anova.lit <- aov(LIT ~ year_treatment, analysis_df)
+summary(anova.lit)
+TukeyHSD(anova.lit)
+```
+
+```{r}
+check_model(anova.lit)
+```
+
+Looks ok.
+
+### Mixed model
+
+```{r}
+litter.lmm <- lmer(LIT ~ treatment*year + (1|block/plot),
+                   data = analysis_df)
+
+summary(litter.lmm)
+
+check_model(litter.lmm)
+
+```
+
+Model check looks ok.
+
+
+```{r}
+check_my_model(litter.lmm, dataset = analysis_df)
+```
+
+
+```{r}
+Anova(litter.lmm)
+
+plot_model(litter.lmm, type = "est", show.values = T)
+```
+
+How much did raking reduce litter cover?
+
+```{r}
+summary_litter <- analysis_df %>%
+  group_by(year, treatment) %>%
+  summarise(
+  mean_litter = mean(LIT)
+) %>%
+  pivot_wider(
+    names_from = treatment,
+    values_from = mean_litter
+  ) %>%
+  mutate(
+    diff_between_treatment_control = unraked - raked
+  )
+summary_litter
+```
+
+How much did raking reduce litter in raked plots?
+
+```{r}
+print(summary_litter %>%
+  filter(year != '2021') %>%
+  pull(raked) %>%
+  mean())
+```
+
+```{r}
+write.csv(
+  summary_litter,
+  file = "analyses_manuscript/stats_results/mean_litter_reduction.csv",
+  row.names = FALSE
+)
+```
+
+## Litter versus diversity variables
+
+```{r}
+vars <- c("sprich", "sprich_native", "shannon", "shannon_native", "native_forb", "exotic_forb", "exotic_grass")
+
+for (var in vars) {
+
+  regression <- ggscatter(
+    analysis_df, x = "LIT", y = var,
+    color = "treatment",
+    add = "reg.line"
+    ) +
+    facet_grid(year ~ treatment) +
+    scale_color_manual(values = my_color_map) +
+    stat_cor() +
+    theme_bw()
+  
+  print(regression)
+  
+}
+```
+
+Litter versus diversity variables across all years and treatments.
+
+```{r}
+
+litter_plots_list <- list()
+for (var in vars) {
+
+  regression <- ggplot(
+    analysis_df, 
+    aes_string(x = "LIT", y = var)
+    ) +
+    geom_point(size = 0.5, alpha = 0.3) +
+    geom_smooth(stat = "smooth", method = "lm") +
+    scale_color_manual(values = my_color_map) +
+    stat_cor() +
+    theme_bw()
+  
+  litter_plots_list[[var]] <- regression
+  
+}
+
+ggarrange(plotlist = litter_plots_list)
+```
+
+

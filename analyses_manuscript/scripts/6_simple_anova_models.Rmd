@@ -1,0 +1,161 @@
+---
+title: "Simple ANOVA models"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(stats)
+library(performance)
+library(purrr)
+```
+
+```{r}
+analysis_df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year))
+```
+
+# One way ANOVAs (year-treatment groups)
+
+```{r}
+fit_one_way_anovas <- function(res_vars, model_structure, dataset) {
+  
+  results_list <- list()
+  all_models <- list()
+    
+  for (rv in res_vars) {
+  
+    # Create list to store all outputs for one model
+    model_outputs <<- list()
+    
+    model_outputs[["response_variable"]] <- rv
+  
+    # Create the formula for ANOVA model
+    formula <- as.formula(paste(rv, model_structure))
+    print(formula)
+    
+    model_outputs[["formula"]] <- deparse(formula)
+    
+    # Fit the linear mixed effects model and store it in a list
+    fitted_model <- aov(formula = formula, data = dataset)
+    all_models[[rv]] <- fitted_model
+    
+    # Validate model
+    check_model(fitted_model, dataset = dataset)
+    
+    summary <- summary(fitted_model)
+    
+    p_val_treatment_year_group <- summary[[1]][["Pr(>F)"]][1]
+    model_outputs[["treatment-year group p-value"]] <- p_val_treatment_year_group
+    
+    # Add results to list of results
+    results_list[[rv]] <- model_outputs
+    
+  }
+
+  results_table <- map_df(results_list, bind_rows)
+  
+  sig_level = 0.05
+
+  results_table_signif <- results_table %>%
+    mutate(significance = case_when(
+      `treatment-year group p-value` > sig_level ~ "n.s.",
+      `treatment-year group p-value` <= sig_level ~ "*"
+    )) %>%
+    mutate(`treatment-year group p-value` = round(`treatment-year group p-value`, digits = 5))
+  
+  output <- list()
+  output[['results']] <- results_table_signif
+  output[['models']] <- all_models 
+  
+  return(output)
+}
+```
+
+```{r}
+response_variables = c("sprich", "sprich_native", "shannon", "shannon_native", "exotic_forb", "native_forb")
+
+ow_anova_results <- fit_one_way_anovas(res_vars = response_variables, model_structure = "~ year_treatment", dataset = analysis_df)
+
+ow_anova_results$results
+```
+
+
+# Two-way ANOVAs
+
+Run all models and extract treatment*year significance to table.
+
+```{r}
+fit_two_way_anovas <- function(res_vars, model_structure, dataset) {
+  
+  results_list <- list()
+    
+  for (rv in res_vars) {
+  
+    # Create list to store all outputs for one model
+    model_outputs <<- list()
+    
+    model_outputs[["response_variable"]] <- rv
+  
+    # Create the formula for ANOVA model
+    formula <- as.formula(paste(rv, model_structure))
+    print(formula)
+    
+    model_outputs[["formula"]] <- deparse(formula)
+    
+    # Fit the linear mixed effects model and store it in a list
+    fitted_model <- aov(formula = formula, data = dataset)
+    
+    # Validate model
+    check_model(fitted_model, dataset = dataset)
+    
+    summary <- summary(fitted_model)
+    
+    p_val_treatment_by_year <- summary[[1]][["Pr(>F)"]][3]
+    model_outputs[["treatment*year p-value"]] <- p_val_treatment_by_year
+    
+    # Add results to list of results
+    results_list[[rv]] <- model_outputs
+    
+  }
+
+  results_table <- map_df(results_list, bind_rows)
+  
+  sig_level = 0.05
+  
+  results_table_signif <- results_table %>%
+    mutate(significance = case_when(
+      `treatment*year p-value` > sig_level ~ "n.s.",
+      `treatment*year p-value` <= sig_level ~ "*"
+    )) %>%
+    mutate(`treatment*year p-value` = round(`treatment*year p-value`, digits = 5))
+  
+  return(results_table_signif)
+}
+```
+
+```{r}
+tw_anova_results <- fit_two_way_anovas(res_vars = response_variables, model_structure = "~ treatment*year", dataset = analysis_df)
+
+tw_anova_results
+```
+
+```{r}
+write.csv(
+  tw_anova_results,
+  file = "analyses_manuscript/stats_results/two_way_anova_results.csv",
+  row.names = FALSE
+)
+```
+
+
+

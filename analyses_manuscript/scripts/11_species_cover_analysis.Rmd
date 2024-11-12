@@ -1,0 +1,539 @@
+---
+title: " Species cover analysis"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+final_figs_path <- file.path("analyses_manuscript/figures/final_manuscript_figures")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# options(scipen = 999)
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(performance)
+library(lme4)
+library(glmmTMB)
+library(car)
+library(sjPlot)
+library(ggeffects)
+
+load("analyses_manuscript/theme_function.R")
+
+species_list <- read.csv("analyses_manuscript/raw_data/20230918_CHRRP_species_list.csv")
+
+analysis_df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year))
+
+areal_cover_df <- read.csv("analyses_manuscript/processed_data/areal_cover_variables.csv")
+
+```
+
+What are the most common species across all plots?
+
+```{r}
+areal_cover_df %>%
+  dplyr::select(-plot, -year, -treatment) %>%
+  summarise_all(mean) %>%
+  gather() %>%
+  arrange(desc(value))
+```
+
+
+Exploratory analysis for individual species.
+
+```{r}
+# Do some exploration for individual species
+analysis_df %>%
+  ggplot(aes(x = BRODIA_cover, color = treatment)) +
+  facet_wrap("year") +
+  geom_histogram(binwidth = 0.015)
+
+analysis_df %>%
+  ggplot(aes(x = BROMAD_cover, color = treatment)) +
+  facet_wrap("year") +
+  geom_histogram(binwidth = 0.015)
+
+analysis_df %>%
+  ggplot(aes(x = BRATOR_cover, color = treatment)) +
+  facet_wrap("year") +
+  geom_histogram(binwidth = 0.015)
+
+analysis_df %>%
+  ggplot(aes(x = SCHBAR_cover, color = treatment)) +
+  facet_wrap("year") +
+  geom_histogram(binwidth = 0.015)
+
+analysis_df %>%
+  ggplot(aes(x = HORMUR_cover, color = treatment)) +
+  facet_wrap("year") +
+  geom_histogram(binwidth = 0.015)
+
+analysis_df %>%
+  ggplot(aes(x = AMSMEN_cover, color = treatment)) +
+  facet_wrap("year") +
+  geom_histogram(binwidth = 0.015)
+```
+
+First, let's look at _Bromus diandrus_ abundance in response to raking.
+
+Examine _B. diandrus abundance_ versus native forb abundance.
+
+```{r}
+species_analysis_df <- analysis_df %>%
+  dplyr::select("plot", "block", "year", "treatment", "year_treatment",
+    "BRODIA_cover", "BRATOR_cover", "AMSMEN_cover",
+    "exotic_forb", "native_forb", "sprich", "shannon", "sprich_native", "shannon_native") %>%
+  pivot_longer(cols = c("exotic_forb", "native_forb", "sprich", "shannon", "sprich_native", "shannon_native"),
+               names_to = "composition_metric",
+               values_to = "metric_value")
+
+species_analysis_df
+```
+
+
+```{r}
+p_brodia <- species_analysis_df %>%
+  ggplot(
+  aes(x = BRODIA_cover, y = metric_value,
+      color = treatment, fill = treatment)
+) +
+facet_wrap(year ~ composition_metric, scales = "free") +
+  scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+  scale_color_manual(
+    values = c("antiquewhite4", "darkgoldenrod2"),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_bw()
+p_brodia
+```
+
+```{r}
+p_brator <- species_analysis_df %>%
+  ggplot(
+  aes(x = BRATOR_cover, y = metric_value,
+      color = treatment, fill = treatment)
+) +
+facet_grid(composition_metric ~ year, scales = "free") +
+  scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+  scale_color_manual(
+    values = c("antiquewhite4", "darkgoldenrod2"),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_bw()
+p_brator
+```
+
+```{r}
+p_amsmen <- species_analysis_df %>%
+  ggplot(
+  aes(x = AMSMEN_cover, y = metric_value,
+      color = treatment, fill = treatment)
+) +
+facet_grid(composition_metric ~ year, scales = "free") +
+  scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+  scale_color_manual(
+    values = c("antiquewhite4", "darkgoldenrod2"),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme_bw()
+p_amsmen
+```
+
+## Did raking alter _B. diandrus_ cover?
+
+```{r}
+# Do paired t-tests and then add to graph
+t_test_results <- species_analysis_df %>%
+  group_by(year) %>%
+  rstatix::t_test(BRODIA_cover ~ treatment) %>%
+  mutate(display_at = "raked") %>%
+  mutate(label_height = 0.3) %>%
+  mutate(p_formatted = case_when(
+    p >= 0.05 ~ "N.S.",
+    p > 0.001 & p < 0.05 ~ paste(as.character(round(p, digits = 3), "*")),
+    TRUE ~ "p < 0.001*"
+      ))
+
+p_treatment_v_brodia <- species_analysis_df %>%
+  # filter(year != "2021") %>% # we do not need to see 2021, no treatment was applied
+  ggplot(
+    aes(x = treatment, y = BRODIA_cover, color = treatment, fill = treatment)
+  ) +
+  geom_jitter(height = 0, width = 0.3, alpha = 0.3) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA,
+               color = "black") +
+  facet_wrap("year") +
+  # Add t-test results
+  geom_text(
+    inherit.aes = FALSE,
+    data = t_test_results,
+    aes(
+      x = display_at,
+      y = 0.3,
+      label = p_formatted
+    )
+  ) +
+  # stat_pvalue_manual(t_test_results, label = "p") +
+  scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+  scale_color_manual(
+    values = c("antiquewhite4", "darkgoldenrod2"),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  ylab(bquote(bold("Live " * bolditalic("B. diandrus") * " cover proportion"))) +
+  xlab("Treatment") +
+  # Formatting
+  theme_Publication() +
+  theme(legend.position = "none")
+p_treatment_v_brodia
+
+```
+
+## Did raking alter native forb cover?
+
+```{r}
+# Do paired t-tests and then add to graph
+t_test_results_nf <- analysis_df %>%
+  group_by(year) %>%
+  rstatix::t_test(native_forb_cover ~ treatment) %>%
+  mutate(display_at = "raked") %>%
+  mutate(label_height = 0.5) %>%
+  mutate(p_formatted = case_when(
+    p >= 0.05 ~ "N.S.",
+    p > 0.001 & p < 0.05 ~ paste("p =", as.character(round(p, digits = 3)), "*"),
+    TRUE ~ "p < 0.001 *"
+      ))
+
+p_treatment_v_native_forb_cover <- analysis_df %>%
+  ggplot(
+    aes(x = treatment, y = native_forb_cover, color = treatment, fill = treatment)
+  ) +
+  geom_jitter(height = 0, width = 0.3, alpha = 0.3) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA,
+               color = "black") +
+  facet_wrap("year") +
+  # Add t-test results
+  geom_text(
+    inherit.aes = FALSE,
+    data = t_test_results_nf,
+    aes(
+      x = display_at,
+      y = 0.7,
+      label = p_formatted
+    )
+  ) +
+  # stat_pvalue_manual(t_test_results, label = "p") +
+  scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+  scale_color_manual(
+    values = c("antiquewhite4", "darkgoldenrod2"),
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  ylab("native forb areal cover") +
+  # Formatting
+  theme_Publication() +
+  theme(legend.position = "none")
+p_treatment_v_native_forb_cover
+```
+
+## Did _B. diandrus_ reduce native forb cover?
+
+```{r}
+# For this plot, we need a special color mapping
+
+color_mapping <- c("2021_unraked" = "lightblue", 
+                   "2021_raked" = "lightblue", 
+                   "2022_unraked" = "darkgoldenrod2",
+                   "2022_raked" = "antiquewhite4",
+                   "2023_unraked" = "darkgoldenrod2",
+                   "2023_raked" = "antiquewhite4")
+
+
+p_lm_brodia_v_native_forb <- analysis_df %>%
+  unite(year_treatment, year, treatment, sep = "_") %>%
+  ggplot(aes(x = BRODIA_cover, y = native_forb_cover,
+             color = year_treatment
+             )) +
+  scale_fill_manual(values = color_mapping) +
+  scale_color_manual(
+    values = color_mapping,
+    guide = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(
+    aes(x = BRODIA_cover, y = native_forb_cover),
+    inherit.aes = FALSE,
+    method = "lm",
+    color = "black",
+    alpha = 0.6) +
+  # Stats
+  stat_cor(aes(x = BRODIA_cover, y = native_forb_cover), method = "pearson",
+           inherit.aes = FALSE,
+           p.accuracy = 0.001) +
+  # Formatting
+  theme_Publication() +
+  theme(legend.position = "none") +
+  ylab("native forb cover") +
+  xlab("live B. diandrus cover") 
+p_lm_brodia_v_native_forb
+```
+
+## Mixed model
+
+### Global model
+
+```{r}
+brodia_native_forb_df <- species_analysis_df %>%
+  filter(composition_metric == "native_forb") %>%
+  pivot_wider(names_from = composition_metric,
+              values_from = metric_value) %>%
+  # Scale using min-max rescaling to avoid heteroscedasticity issues
+  mutate(BRODIA_cover_rescaled = (BRODIA_cover - min(BRODIA_cover)) / 
+           (max(BRODIA_cover) - min(BRODIA_cover))
+) %>%
+  mutate(BRODIA_cover_unscaled = BRODIA_cover_rescaled * (max(BRODIA_cover) - min(BRODIA_cover)) + min(BRODIA_cover)
+         )
+brodia_native_forb_df
+
+```
+
+Fit model.
+
+```{r}
+m_brodia_nf_zif <- glmmTMB(native_forb ~ BRODIA_cover_rescaled + (1|block/plot),
+                       family = beta_family(),
+                       ziformula = ~1,
+                    data = brodia_native_forb_df)
+summary(m_brodia_nf_zif)
+
+performance::check_model(m_brodia_nf_zif)
+car::Anova(m_brodia_nf_zif)
+
+sjPlot::plot_model(m_brodia_nf_zif, type = "pred")
+```
+
+```{r}
+# Extract the BRODIA data as a vector for unscaling
+BRODIA_cover <- brodia_native_forb_df %>% 
+  pull(BRODIA_cover)
+
+# Predict
+predicted_values <- ggpredict(m_brodia_nf_zif, terms = "BRODIA_cover_rescaled")
+
+plot(predicted_values)
+  
+predicted_values_with_rescaled_x <- predicted_values %>%
+  # Unscale back to raw values
+  as.data.frame() %>%
+    mutate(x = x * (max(BRODIA_cover) - min(BRODIA_cover)) + min(BRODIA_cover))
+
+ggplot(predicted_values_with_rescaled_x, aes(x = x, y = predicted)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.3)
+```
+
+
+```{r}
+test_model <- function(fitted_model) {
+  
+  chisqAnova <- car::Anova(fitted_model)
+  
+  print(chisqAnova)
+  
+  # Extract p-value for the treatment*year interaction term
+  pval <- chisqAnova$'Pr(>Chisq)'[1]
+  pval.r <- ifelse(
+    pval < 0.001,
+    "< 0.001",
+    round(pval, digits = 3)
+  )
+
+  # Assess significance of p-value
+  significance <- ifelse(pval < 0.05,
+                       "*",
+                       "N.S.")
+  pval_signif <- paste(pval.r, significance, sep = " ")
+    
+  print(pval_signif)
+  
+  return(pval_signif)
+}
+```
+
+
+```{r}
+plot_brodia_model <- function(fitted_model, response_variable, response_name, dataset) {
+  
+  # Calculate p-value
+  pval = test_model(fitted_model)
+
+  # Format p-value label
+  significance_label <- paste("p-value:", pval, sep = " ")
+  
+  # Format plot title
+  plot_title <- paste(
+    paste(response_name, ",", sep = ""),
+          significance_label, sep = " ") # if a different format is desired
+  # plot_title <- significance_label
+  
+  # Compute predicted values
+  predicted_values <- ggpredict(fitted_model, terms = "BRODIA_cover_rescaled")
+  
+  predicted_values_with_rescaled_x <- predicted_values %>%
+  # Unscale back to raw values
+    as.data.frame() %>%
+    mutate(x = x * (max(BRODIA_cover) - min(BRODIA_cover)) + min(BRODIA_cover))
+
+  # Make plot
+  model_plot <- ggplot(predicted_values_with_rescaled_x, aes(x = x, y = predicted)) +
+    geom_line() +
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.3) +
+    geom_point(
+      inherit.aes = FALSE,
+      data = dataset,
+      aes_string(
+        x = "BRODIA_cover",
+        y = response_variable,
+        fill = "year_treatment",
+        color = "year_treatment"
+        ),
+      alpha = 0.3,
+      shape = 16,
+      size = 3
+      ) +
+    scale_fill_manual(values = color_mapping) +
+    scale_color_manual(
+      values = color_mapping) +
+  # labs(title = plot_title) +
+  theme_Publication() +
+  # ggtitle(plot_title) +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 12)) +
+  ylab(response_name) +
+  xlab("Live B. diandrus cover") +
+  # Add significance label
+  annotate("text", x = Inf, y = Inf, label = paste(significance_label), vjust = 2, hjust = 1, size = 4)
+
+  return(model_plot)
+}
+```
+
+Fit for overall dataset.
+
+```{r}
+p_brodia_v_native_forb_lmm <- plot_brodia_model(
+  fitted_model = m_brodia_nf_zif,
+  response_variable = "native_forb",
+  response_name = "native forb cover", 
+  dataset = brodia_native_forb_df) +
+  ylab(expression(bold("Native forb cover proportion"))) +
+  xlab(expression(bold("Live " * bolditalic("B. diandrus") * " cover proportion")))
+
+p_brodia_v_native_forb_lmm
+  
+```
+
+### For treatment years only
+
+Fit for treatment plots only, where there is more variation in native forb cover.
+
+```{r}
+brodia_native_forb_raked_only_df <- brodia_native_forb_df %>%
+  filter(treatment == "raked",
+         year != "2021")
+  
+m_brodia_nf_raked_only_zif <- glmmTMB(native_forb ~ BRODIA_cover_rescaled + (1|block/plot),
+                       family = beta_family(),
+                       ziformula = ~1,
+                    data = brodia_native_forb_raked_only_df)
+
+p_brodia_v_native_forb_raked_only_lmm <- plot_brodia_model(
+  fitted_model = m_brodia_nf_raked_only_zif,
+  response_variable = "native_forb",
+  response_name = "native forb cover", 
+  dataset = brodia_native_forb_raked_only_df
+)
+p_brodia_v_native_forb_raked_only_lmm
+```
+
+## Make Figure 2
+
+Combine into two-panel figure.
+
+```{r}
+p_treatment_v_brodia <- p_treatment_v_brodia +
+  ggtitle("(a)") +
+  theme(
+    plot.title = element_text(hjust = 0, size = 12)
+  )
+
+p_brodia_v_native_forb_lmm <- p_brodia_v_native_forb_lmm +
+  ggtitle("(b)") +
+  theme(
+    plot.title = element_text(hjust = 0, size = 12)
+  )
+
+p_treatment_brodia_native_forb <- ggarrange(
+  p_treatment_v_brodia,
+  p_brodia_v_native_forb_lmm
+)
+  
+p_treatment_brodia_native_forb
+
+```
+
+
+```{r}
+ggsave(filename = "fig_2_live_brodia_and_native_forb.pdf",
+         plot = p_treatment_brodia_native_forb,
+         path = final_figs_path,
+         width = 14,
+         height = 6,
+        scale = 0.8
+       )
+
+ggsave(filename = "fig_2_live_brodia_and_native_forb.jpg",
+         plot = p_treatment_brodia_native_forb,
+         path = final_figs_path,
+         width = 14,
+         height = 6,
+        scale = 0.8,
+       dpi=300
+       )
+```
+
+## Summarise species cover
+
+```{r}
+species_mean_cover_years_treatments <- areal_cover_df %>%
+  group_by(year, treatment) %>%
+  summarize(across(is.numeric, mean))
+
+species_mean_cover_years_treatments
+```
+
+```{r}
+write.csv(
+  species_mean_cover_years_treatments,
+  file = "analyses_manuscript/stats_results/areal_cover_by_species.csv",
+  row.names = FALSE
+)
+```
+

@@ -1,0 +1,119 @@
+---
+title: "Make results table"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+---
+
+```{r}
+library(tidyverse)
+library(writexl)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+single_year_results <- read.csv("analyses_manuscript/stats_results/single_year_model_results.csv")
+
+global_model_results <- read.csv("analyses_manuscript/stats_results/global_model_results.csv",
+                                 check.names = FALSE)
+
+head(global_model_results)
+
+```
+
+```{r}
+head(single_year_results)
+```
+
+Harmonize.
+
+```{r}
+single_year_results_f <- single_year_results %>%
+  rename(`Pr(>Chisq)` = p_value) %>%
+  unite("p_value_pretty", p_value_f, significance, sep = " ") %>%
+  # Extract year (last four digits)
+  mutate(year = str_extract(model, "\\d{4}$")) %>%
+  mutate(response_variable = str_sub(model, end = -5)) %>%
+  mutate(response_variable = str_remove_all(response_variable, "_fm_")) %>%
+  select(-model) %>%
+  mutate(model_type = "single-year")
+
+single_year_results_f
+```
+
+Combine the two tables.
+
+```{r}
+response_names <- c(
+  sprich	= "overall species richness",
+  sprich_native = "native species richness",
+  
+  log_shannon_native = "Shannon diversity index of native species (log-transformed)",
+  shnat	= "Shannon diversity index of native species (log-transformed)",
+  shannon = "Shannon diversity index",
+
+  ef = "exotic forb relative abundance",
+  exotic_forb = "exotic forb relative abundance",
+  
+  native_forb = "native forb relative abundance",
+  nf = "native forb relative abundance") %>%
+  enframe(name = "response_variable",
+          value = "response_name")
+
+response_order <- c(
+  "overall species richness",
+  "native species richness",
+  "Shannon diversity index",
+  "Shannon diversity index of native species (log-transformed)",
+  "native forb relative abundance",
+  "exotic forb relative abundance"
+)
+```
+
+
+```{r}
+table_of_models <- global_model_results %>%
+  mutate(year = "") %>%
+  bind_rows(single_year_results_f) %>%
+  # Round the chisq
+  mutate(Chisq = round(Chisq, digits=2)) %>%
+   # Clean up p-value formatting
+  mutate(p_value_pretty = gsub("N\\.S\\.", "", p_value_pretty)) %>%
+  mutate(p_value_pretty = str_replace_all(p_value_pretty, " ", "")) %>%
+  
+  # Reorder columns
+  left_join(response_names, by = "response_variable") %>%
+  select(response_name, model_type, predictor, year, Df, Chisq, p_value_pretty) %>%
+  # Arrange to make it easier to read
+  mutate(response_name = factor(response_name, levels = response_order)) %>%
+  arrange(
+    response_name,
+    model_type, predictor, year
+  ) %>%
+  # Clean up variable names
+  rename("response variable " = response_name,
+         "degrees of freedom" = Df,
+         "chi-squared" = Chisq,
+         "p-value" = p_value_pretty
+  ) %>%
+  rename_with(~str_replace_all(., "_", " "), everything())
+
+table_of_models
+```
+
+Export final formatted table.
+
+```{r}
+write.csv(table_of_models,
+          file = "analyses_manuscript/stats_results/Table_1.csv",
+          row.names = FALSE)
+
+write_xlsx(table_of_models, 
+           "analyses_manuscript/stats_results/Table_1.xlsx")
+```

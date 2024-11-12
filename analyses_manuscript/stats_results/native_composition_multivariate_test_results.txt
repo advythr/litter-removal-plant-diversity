@@ -1,0 +1,220 @@
+$permanova_test_for_groups
+Permutation test for adonis under reduced model
+Terms added sequentially (first to last)
+Permutation: free
+Number of permutations: 999
+
+adonis2(formula = composition_mat ~ treatment_groups, permutations = 999, method = "bray")
+                  Df SumOfSqs      R2      F Pr(>F)   
+treatment_groups   5   0.7113 0.05407 2.4238  0.002 **
+Residual         212  12.4429 0.94593                 
+Total            217  13.1542 1.00000                 
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+$permanova_test_for_groups_pval
+[1] 0.002
+
+$permanova_test_for_year_by_treatment_interaction
+Permutation test for adonis under reduced model
+Terms added sequentially (first to last)
+Permutation: free
+Number of permutations: 999
+
+adonis2(formula = composition_mat ~ treatments * years, permutations = 999, method = "bray")
+                  Df SumOfSqs      R2      F Pr(>F)   
+treatments         1   0.3410 0.02592 5.8093  0.003 **
+years              2   0.2490 0.01893 2.1211  0.053 . 
+treatments:years   2   0.1213 0.00923 1.0338  0.391   
+Residual         212  12.4429 0.94593                 
+Total            217  13.1542 1.00000                 
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+$permanova_test_for_year_by_treatment_interaction_pval
+[1] 0.391
+
+$beta_dispersion
+
+	Homogeneity of multivariate dispersions
+
+Call: betadisper(d = compDS, group = treatment_groups)
+
+No. of Positive Eigenvalues: 42
+No. of Negative Eigenvalues: 53
+
+Average distance to median:
+  2021_raked 2021_unraked   2022_raked 2022_unraked   2023_raked 2023_unraked 
+     0.12723      0.08860      0.19563      0.09785      0.22734      0.11641 
+
+Eigenvalues for PCoA axes:
+(Showing 8 of 95 eigenvalues)
+ PCoA1  PCoA2  PCoA3  PCoA4  PCoA5  PCoA6  PCoA7  PCoA8 
+7.1552 2.9845 2.1201 0.7600 0.6201 0.4032 0.2342 0.1904 
+
+$beta_dispersion_permutation_test
+
+Permutation test for homogeneity of multivariate dispersions
+Permutation: free
+Number of permutations: 999
+
+Response: Distances
+           Df Sum Sq  Mean Sq      F N.Perm Pr(>F)  
+Groups      5 0.5940 0.118797 2.7582    999  0.025 *
+Residuals 212 9.1311 0.043071                       
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+$beta_dispersion_permutation_test_pval
+[1] 0.025
+
+$indicator_species_analysis_for_treatment_groups
+ [1] ""                                                               
+ [2] " Multilevel pattern analysis"                                   
+ [3] " ---------------------------"                                   
+ [4] ""                                                               
+ [5] " Association function: IndVal.g"                                
+ [6] " Significance level (alpha): 1"                                 
+ [7] ""                                                               
+ [8] " Total number of species: 13"                                   
+ [9] " Selected number of species: 13 "                               
+[10] " Number of species associated to 1 group: 13 "                  
+[11] " Number of species associated to 2 groups: 0 "                  
+[12] " Number of species associated to 3 groups: 0 "                  
+[13] " Number of species associated to 4 groups: 0 "                  
+[14] " Number of species associated to 5 groups: 0 "                  
+[15] ""                                                               
+[16] " List of species associated to each combination: "              
+[17] ""                                                               
+[18] " Group 2021_raked  #sps.  1 "                                   
+[19] "        stat p.value"                                           
+[20] "PHADIS 0.184   0.375"                                           
+[21] ""                                                               
+[22] " Group 2021_unraked  #sps.  1 "                                 
+[23] "        stat p.value"                                           
+[24] "LUPSPA 0.186   0.125"                                           
+[25] ""                                                               
+[26] " Group 2022_raked  #sps.  2 "                                   
+[27] "        stat p.value  "                                         
+[28] "EUCCHR 0.340   0.014 *"                                         
+[29] "PECLIN 0.138   0.527  "                                         
+[30] ""                                                               
+[31] " Group 2022_unraked  #sps.  1 "                                 
+[32] "       stat p.value"                                            
+[33] "AMSMEN 0.42   0.328"                                            
+[34] ""                                                               
+[35] " Group 2023_raked  #sps.  7 "                                   
+[36] "        stat p.value   "                                        
+[37] "CROSET 0.383   0.005 **"                                        
+[38] "CRYINT 0.371   0.043 * "                                        
+[39] "LUPBIC 0.238   0.153   "                                        
+[40] "ACMGLA 0.224   0.168   "                                        
+[41] "CALCIL 0.219   0.181   "                                        
+[42] "CRACON 0.158   1.000   "                                        
+[43] "NEMMEN 0.122   0.752   "                                        
+[44] ""                                                               
+[45] " Group 2023_unraked  #sps.  1 "                                 
+[46] "        stat p.value"                                           
+[47] "LUPTRU 0.265   0.606"                                           
+[48] "---"                                                            
+[49] "Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 "
+
+$indicator_species_analysis_for_2022
+ [1] ""                                                               
+ [2] " Multilevel pattern analysis"                                   
+ [3] " ---------------------------"                                   
+ [4] ""                                                               
+ [5] " Association function: IndVal.g"                                
+ [6] " Significance level (alpha): 1"                                 
+ [7] ""                                                               
+ [8] " Total number of species: 13"                                   
+ [9] " Selected number of species: 9 "                                
+[10] " Number of species associated to 1 group: 9 "                   
+[11] ""                                                               
+[12] " List of species associated to each combination: "              
+[13] ""                                                               
+[14] " Group raked  #sps.  7 "                                        
+[15] "        stat p.value  "                                         
+[16] "CRYINT 0.448   0.169  "                                         
+[17] "LUPTRU 0.441   0.207  "                                         
+[18] "EUCCHR 0.415   0.086 ."                                         
+[19] "LUPBIC 0.277   0.127  "                                         
+[20] "CALCIL 0.226   0.232  "                                         
+[21] "PHADIS 0.194   0.547  "                                         
+[22] "PECLIN 0.160   0.483  "                                         
+[23] ""                                                               
+[24] " Group unraked  #sps.  2 "                                      
+[25] "        stat p.value  "                                         
+[26] "AMSMEN 0.729   0.025 *"                                         
+[27] "NEMMEN 0.158   1.000  "                                         
+[28] "---"                                                            
+[29] "Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 "
+
+$indicator_species_analysis_for_2023
+ [1] ""                                                               
+ [2] " Multilevel pattern analysis"                                   
+ [3] " ---------------------------"                                   
+ [4] ""                                                               
+ [5] " Association function: IndVal.g"                                
+ [6] " Significance level (alpha): 1"                                 
+ [7] ""                                                               
+ [8] " Total number of species: 13"                                   
+ [9] " Selected number of species: 12 "                               
+[10] " Number of species associated to 1 group: 12 "                  
+[11] ""                                                               
+[12] " List of species associated to each combination: "              
+[13] ""                                                               
+[14] " Group raked  #sps.  10 "                                       
+[15] "        stat p.value    "                                       
+[16] "CRYINT 0.662   0.001 ***"                                       
+[17] "CROSET 0.474   0.129    "                                       
+[18] "EUCCHR 0.316   0.723    "                                       
+[19] "LUPBIC 0.284   0.688    "                                       
+[20] "CALCIL 0.274   0.244    "                                       
+[21] "ACMGLA 0.224   0.472    "                                       
+[22] "CRACON 0.158   1.000    "                                       
+[23] "NEMMEN 0.158   1.000    "                                       
+[24] "PECLIN 0.158   1.000    "                                       
+[25] "PHADIS 0.158   1.000    "                                       
+[26] ""                                                               
+[27] " Group unraked  #sps.  2 "                                      
+[28] "        stat p.value   "                                        
+[29] "AMSMEN 0.735   0.010 **"                                        
+[30] "LUPTRU 0.397   0.896   "                                        
+[31] "---"                                                            
+[32] "Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 "
+
+$indicator_species_analysis_for_treatment_years_only
+ [1] ""                                                               
+ [2] " Multilevel pattern analysis"                                   
+ [3] " ---------------------------"                                   
+ [4] ""                                                               
+ [5] " Association function: IndVal.g"                                
+ [6] " Significance level (alpha): 1"                                 
+ [7] ""                                                               
+ [8] " Total number of species: 13"                                   
+ [9] " Selected number of species: 12 "                               
+[10] " Number of species associated to 1 group: 12 "                  
+[11] ""                                                               
+[12] " List of species associated to each combination: "              
+[13] ""                                                               
+[14] " Group raked  #sps.  11 "                                       
+[15] "        stat p.value    "                                       
+[16] "CRYINT 0.551   0.001 ***"                                       
+[17] "LUPTRU 0.409   0.455    "                                       
+[18] "EUCCHR 0.378   0.090 .  "                                       
+[19] "CROSET 0.339   0.140    "                                       
+[20] "LUPBIC 0.281   0.183    "                                       
+[21] "CALCIL 0.252   0.063 .  "                                       
+[22] "PHADIS 0.170   0.413    "                                       
+[23] "ACMGLA 0.159   0.525    "                                       
+[24] "PECLIN 0.159   0.531    "                                       
+[25] "CRACON 0.113   1.000    "                                       
+[26] "NEMMEN 0.087   1.000    "                                       
+[27] ""                                                               
+[28] " Group unraked  #sps.  1 "                                      
+[29] "        stat p.value    "                                       
+[30] "AMSMEN 0.732   0.001 ***"                                       
+[31] "---"                                                            
+[32] "Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 "
+

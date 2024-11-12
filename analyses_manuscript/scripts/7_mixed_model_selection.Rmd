@@ -1,0 +1,666 @@
+---
+title: "Model selection"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries and data
+
+```{r}
+library(tidyverse)
+library(performance)
+library(lme4)
+library(car)
+library(DHARMa)
+
+library(fitdistrplus)
+library(glmmTMB)
+library(GLMMadaptive)
+
+library(sjPlot)
+library(emmeans)
+library(ggpubr)
+
+# Set ggplot theme
+theme_set(theme_bw())
+```
+
+```{r}
+analysis_df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year)) %>%
+  mutate(year_num = case_when(
+                    year == '2021' ~ 0,
+                    year == '2022' ~ 1,
+                    year == '2023' ~ 2)) %>%
+  # filter(year != "2021") %>%
+  mutate(log_shannon_native = log(shannon_native + 1))
+
+head(analysis_df)
+
+```
+
+
+## Functions for generic model workflow
+
+Model to test.
+
+```{r}
+m_test <- lmer(shannon ~ treatment*year + (1|block/plot),
+               analysis_df)
+```
+
+
+### Check model
+
+```{r}
+check_my_model <- function(fitted_model, dataset) {
+  
+  # Residuals versus fitted
+  
+    tryCatch({
+      print(plot(fitted_model))
+    }, error = function(e) {
+      cat("Error occurred while plotting residuals versus fitted:", e$message, "\n")
+  })
+  
+   # Residual normality
+  print(plot(simulateResiduals(fittedModel = fitted_model)))
+  hist(resid(fitted_model))
+  
+  # Residuals versus covariates
+  
+  boxplot(resid(fitted_model) ~ treatment, data = dataset, ylab = "Normalized residuals")
+  abline(h = 0, lty = 2)
+  
+  boxplot(resid(fitted_model) ~ year, data = dataset, ylab = "Normalized residuals")
+  abline(h = 0, lty = 2)
+  
+  boxplot(resid(fitted_model) ~ block, data = dataset, ylab = "Normalized residuals")
+  abline(h = 0, lty = 2)
+  
+}
+```
+
+```{r}
+check_my_model(m_test, dataset = analysis_df)
+```
+
+### Test model
+
+```{r}
+test_my_model <- function(fitted_model) {
+  
+  model_outputs <- list()
+  
+  # Hypothesis testing with Anova() chisq test
+  chisqAnova <- Anova(fitted_model)
+  
+  model_outputs[["chisquare_anova_test"]] <- chisqAnova
+
+  # Extract p-value for the treatment*year interaction term
+  pval <- chisqAnova$'Pr(>Chisq)'[3]
+  pval.r <- signif(pval, digits = 3)
+  
+  model_outputs[["p-value"]] <- pval.r
+
+  # Assess significance of p-value
+  significance <- ifelse(pval < 0.05,
+                       "*",
+                       "N.S.")
+  
+  model_outputs[["significance"]] <- significance
+  
+  print(model_outputs)
+  
+  return(model_outputs)
+  
+}
+```
+
+Test function.
+
+```{r}
+test_my_model(m_test)
+```
+
+### Simulate from model
+
+```{r}
+simulate_my_model <- function(model, rv) {
+
+  all_sims <- list()
+  
+  for (i in c(1:100)) {
+    
+    sim <- simulate(model, nsim=1)
+    
+    all_sims[[i]] <- sim
+    
+  }
+  
+  # Combine the vectors into a data frame
+  sim_data <- data.frame(
+    value = unlist(all_sims),
+    sim_num = rep(1:100, each = 239)
+  )
+  
+  sim_data$sim_num_name <- paste("simulation_", sim_data$sim_num, sep = "")
+  sim_data$sim_num_name <- as.factor(sim_data$sim_num_name)
+
+  print(head(sim_data))
+  
+  # Plot simulated versus actual
+  sim_plot <- ggplot() +
+    geom_histogram(data = sim_data, aes(x = value, fill = sim_num_name),
+      alpha = 0.6,
+                   position = "identity",
+                   color = "black") +
+    scale_fill_grey() +
+    # Plot real data on top
+    geom_histogram(data = analysis_df, aes(x = .data[[rv]]), fill = "red", alpha = 0.5) +
+    labs(title = "Simulations using model (greys) versus actual data (red)", x = "response variable", y = "frequency") +
+    theme(legend.position = "none")
+  
+  print(sim_plot)
+
+  return(sim_plot)
+
+}
+
+```
+
+Test function.
+
+```{r}
+# simulate_my_model(m_test, rv = "shannon")
+```
+
+
+```{r}
+fit_and_check_glmm_model <- function(response_variable, model_structure, dataset) {
+  
+  # Create list to store all outputs for one model
+  model_outputs <<- list()
+  
+  model_outputs[["response_variable"]] <<- response_variable
+  
+  # Create the formula for the linear mixed effects model
+  formula <- as.formula(paste(response_variable, model_structure))
+  print(formula)
+  
+  model_outputs[["formula"]] <<- formula
+
+  # Fit the linear mixed effects model
+  fitted_model <- glmer(formula, data = dataset,
+                        family = "poisson")
+  
+  model_outputs[["fitted_model"]] <<- fitted_model
+  
+  print(summary(fitted_model))
+    
+  # Model diagnostics
+  check_my_model(fitted_model = fitted_model, dataset = dataset)
+  
+  # Checks unique to GLMMs
+  print(check_zeroinflation(fitted_model))
+  print(check_overdispersion(fitted_model))
+    
+  # Other assumptions
+  print(check_model(fitted_model))
+  
+  # Test
+  test_my_model(fitted_model = fitted_model)
+  
+  # Simulate
+  simulate_my_model(fitted_model, rv = response_variable)
+  
+  return(model_outputs)
+  
+}
+
+```
+
+### Test GLMM function
+
+```{r}
+response_variable <- "sprich"
+model_structure <- "~ treatment*year + (1|block/plot)"
+dataset <- analysis_df
+
+fit_and_check_glmm_model(
+  response_variable = response_variable,
+  model_structure = model_structure,
+  dataset = analysis_df
+)
+
+```
+
+## Fit and check LMM models function
+
+```{r}
+fit_and_check_lmm_model <- function(response_variable, model_structure, dataset) {
+  
+  # Create list to store all outputs for one model
+  model_outputs <<- list()
+  
+  model_outputs[["response_variable"]] <<- response_variable
+
+  # Create the formula for the linear mixed effects model
+  formula <- as.formula(paste(response_variable, model_structure))
+  print(formula)
+  
+  model_outputs[["formula"]] <<- formula
+
+  # Fit the linear mixed effects model and store it in a list
+  fitted_model <- lmer(formula, data = dataset)
+    
+  model_outputs[["fitted_model"]] <<- fitted_model
+  
+  print(summary(fitted_model))
+  
+  # Validate model
+  check_my_model(fitted_model, dataset = dataset)
+  
+  # Other diagnostics
+  print(check_model(fitted_model))
+  
+  # Test
+  test_my_model(fitted_model)
+  
+  # Simulate
+  simulate_my_model(fitted_model, rv = response_variable)
+  
+  return(model_outputs)
+}
+```
+
+### Test LMM function.
+
+```{r}
+response_variable <- "shannon"
+model_structure <- "~ treatment*year + (1|block/plot)"
+dataset = analysis_df
+
+fit_and_check_lmm_model(
+  response_variable = response_variable,
+  model_structure = model_structure,
+  dataset = analysis_df
+)
+
+```
+
+## Run models individually to assess fit and diagnostics
+
+### Species richness
+
+Try model structures with and without block (to account for spatial autocorrelation).
+
+#### Year as categorical
+
+```{r}
+response_variable <- "sprich"
+model_structure <- c("~ treatment*year + (1|block/plot)", "~ treatment*year + (1|plot)")
+dataset = analysis_df
+
+for (structure in model_structure) {
+  
+  print("_______________________________________________________")
+  
+  fit_and_check_glmm_model(
+    response_variable = response_variable,
+    model_structure = structure,
+    dataset = analysis_df
+  )
+  
+  print("_______________________________________________________")
+}
+
+```
+
+#### Year as continuous
+
+```{r}
+sprich_m1 <- fit_and_check_glmm_model(response_variable = "sprich",
+    model_structure = "~ treatment*year_num + (1|block/plot)",
+    dataset = analysis_df)
+
+sprich_m1[['fitted_model']]
+test_my_model(sprich_m1[['fitted_model']])
+
+sjPlot::plot_model(sprich_m1[['fitted_model']], type = "pred", terms = c("year_num", "treatment"))
+```
+
+Model using negative binomial distribution (Cullen-Frey graph indicates this distribution would also work).
+
+```{r}
+sprich_m2 <- glmmTMB(sprich ~ treatment*year + (1|block/plot),
+                        data = analysis_df,
+                        family= nbinom2
+)
+
+summary(sprich_m2)
+simulate_my_model(sprich_m2, rv = "sprich")
+
+test_my_model(sprich_m2)
+```
+
+### Native species richness
+
+#### Year as categorical
+
+```{r}
+response_variable <- "sprich_native"
+model_structure <- c("~ treatment*year + (1|block/plot)", "~ treatment*year + (1|plot)")
+dataset = analysis_df
+
+for (structure in model_structure) {
+  
+  print("_______________________________________________________")
+  
+  fit_and_check_glmm_model(
+    response_variable = response_variable,
+    model_structure = structure,
+    dataset = analysis_df
+  )
+  
+  print("_______________________________________________________")
+}
+```
+
+#### Year as continuous
+
+```{r}
+sprich_native_m1 <- fit_and_check_glmm_model(response_variable = "sprich_native",
+    model_structure = "~ treatment*year_num + (1|block/plot)",
+    dataset = analysis_df)
+
+sprich_native_m1[['fitted_model']]
+test_my_model(sprich_native_m1[['fitted_model']])
+
+sjPlot::plot_model(sprich_native_m1[['fitted_model']], type = "pred", terms = c("year_num", "treatment"))
+```
+
+### Shannon
+
+#### Year as categorical
+
+```{r}
+response_variable <- "shannon"
+model_structure <- c("~ treatment*year + (1|block/plot)", "~ treatment*year + (1|plot)")
+dataset = analysis_df
+
+for (structure in model_structure) {
+  
+  print("_______________________________________________________")
+  
+  fit_and_check_lmm_model(
+    response_variable = response_variable,
+    model_structure = structure,
+    dataset = analysis_df
+  )
+  
+  print("_______________________________________________________")
+}
+```
+
+```{r}
+sh_m1 <- fit_and_check_lmm_model(
+    response_variable = "shannon",
+    model_structure = "~ treatment*year + (1|block/plot)",
+    dataset = analysis_df
+    )
+
+simulate_my_model(sh_m1[['fitted_model']], rv = "shannon")
+
+test_my_model(sh_m1[['fitted_model']])
+
+sjPlot::plot_model(sh_m1[['fitted_model']], type = "pred", terms = c("year", "treatment"))
+
+```
+
+#### Year as continuous
+
+```{r}
+sh_m2 <- fit_and_check_lmm_model(response_variable = "shannon",
+    model_structure = "~ treatment*year_num + (1|block/plot)",
+    dataset = analysis_df)
+
+sh_m2[['fitted_model']]
+test_my_model(sh_m2[['fitted_model']])
+
+sjPlot::plot_model(sh_m2[['fitted_model']], type = "pred", terms = c("year_num", "treatment"))
+
+simulate_my_model(sh_m2[['fitted_model']], rv = "shannon")
+```
+
+### Shannon native
+
+#### Year as categorical
+
+```{r}
+response_variable <- "shannon_native"
+model_structure <- c("~ treatment*year + (1|block/plot)" 
+                     # "~ treatment*year + (1|plot)"
+                     )
+dataset = analysis_df
+
+for (structure in model_structure) {
+  
+  print("_______________________________________________________")
+  
+  fit_and_check_lmm_model(
+    response_variable = response_variable,
+    model_structure = structure,
+    dataset = analysis_df
+  )
+  
+  print("_______________________________________________________")
+}
+```
+
+This data is clearly zero-inflated.
+
+#### Log transform
+
+What if we log transform?
+
+```{r}
+response_variable <- "log_shannon_native"
+model_structure <- "~ treatment*year + (1|block/plot)"
+dataset = analysis_df
+
+
+fit_and_check_lmm_model(
+  response_variable = response_variable,
+  model_structure = model_structure,
+  dataset = analysis_df
+)
+
+```
+
+Still problematic diagnostics.
+
+#### ZIF, year as categorical
+
+What if we try a zero-inflated model?
+
+We will use a beta distribution as the Cullen-Frey graph indicates this is the best fit for the data (see 3_data_exploration).
+
+```{r}
+analysis_df <- analysis_df %>%
+  mutate(norm_shannon_native = ((((shannon_native - min(shannon_native)) 
+                                 / max(shannon_native) - min(shannon_native))/1.01))
+         )
+```
+
+Model with zero inflation.
+
+```{r}
+shnat_m1 <- glmmTMB(log_shannon_native ~ treatment*year + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family = beta_family())
+
+simulate_my_model(model = shnat_m1, rv = "shannon_native")
+
+check_predictions(shnat_m1)
+
+summary(shnat_m1)
+
+check_my_model(shnat_m1, dataset = analysis_df)
+
+check_model(shnat_m1)
+
+plot(simulateResiduals(fittedModel = shnat_m1))
+
+sjPlot::plot_model(shnat_m1, type = "pred", terms = c("treatment", "year"), show.values = TRUE)
+
+car::Anova(shnat_m1, component = "cond")
+```
+
+#### ZIF, year as continuous
+
+Model with year as continuous.
+
+```{r}
+shnat_m2 <- glmmTMB(log_shannon_native ~ treatment*year_num + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family = beta_family())
+
+simulate_my_model(model = shnat_m2, rv = "shannon_native")
+
+check_predictions(shnat_m2)
+
+summary(shnat_m2)
+
+check_model(shnat_m2)
+
+plot(simulateResiduals(fittedModel = shnat_m2))
+
+
+sjPlot::plot_model(shnat_m2, type = "pred", terms = c("year_num", "treatment"), show.values = TRUE)
+
+car::Anova(shnat_m2, component = "cond")
+
+```
+
+### Exotic forb
+
+#### Year as categorical
+
+```{r}
+ef_m1 <- glmmTMB(exotic_forb ~ treatment*year + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family= beta_family()
+)
+
+summary(ef_m1)
+
+check_model(ef_m1)
+
+plot(simulateResiduals(fittedModel = ef_m1))
+
+simulate_my_model(ef_m1, rv = "exotic_forb")
+
+test_my_model(ef_m1)
+
+sjPlot::plot_model(ef_m1, type = "pred", terms = c("year", "treatment"), show.values = TRUE)
+
+car::Anova(ef_m1, component = "cond")
+
+```
+
+#### Year as continuous
+
+```{r}
+ef_m2 <- glmmTMB(exotic_forb ~ treatment*year_num + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family= beta_family()
+)
+
+summary(ef_m2)
+
+check_model(ef_m2)
+simulate_my_model(model = ef_m2, rv = "exotic_forb")
+
+test_my_model(ef_m2)
+
+sjPlot::plot_model(ef_m2, type = "pred", terms = c("year_num", "treatment"),
+                   show.values = TRUE)
+
+car::Anova(ef_m2, component = "cond")
+
+```
+
+### Native forb
+
+#### Year as categorical
+
+```{r}
+nf_m1 <- glmmTMB(native_forb ~ treatment*year + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family= beta_family()
+)
+
+summary(nf_m1 )
+
+check_model(nf_m1 )
+
+plot(simulateResiduals(fittedModel = nf_m1 ))
+
+simulate_my_model(nf_m1, rv = "native_forb")
+
+sjPlot::plot_model(nf_m1 , type = "pred", terms = c("year", "treatment"), show.values = TRUE)
+
+car::Anova(nf_m1, component = "cond")
+
+```
+
+#### Year as continuous
+
+```{r}
+nf_m2 <- glmmTMB(native_forb ~ treatment*year_num + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family= beta_family()
+)
+
+summary(nf_m2)
+
+check_model(nf_m2)
+
+plot(simulateResiduals(fittedModel = nf_m2))
+
+simulate_my_model(nf_m2, rv = "native_forb")
+
+sjPlot::plot_model(nf_m2, type = "pred", terms = c("year_num", "treatment"), show.values = TRUE)
+
+car::Anova(nf_m2, component = "cond")
+```
+
+Compare to a regular linear mixed model.
+
+```{r}
+nf_lmm <- fit_and_check_lmm_model(
+  response_variable = "native_forb",
+  model_structure = "~ treatment*year + (1|block/plot)",
+  dataset = analysis_df
+)
+
+test_my_model(nf_lmm[['fitted_model']])
+```
+

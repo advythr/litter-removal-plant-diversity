@@ -1,0 +1,801 @@
+---
+title: "Calculating analysis variables"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(vegan)
+library(ggpubr)
+library(ggrepel)
+library(ggpmisc)
+library(knitr)
+library(patchwork)
+
+load("analyses_manuscript/theme_function.R")
+
+```
+
+## Load data
+
+```{r}
+data_sp_matrix <- read.csv("analyses_manuscript/processed_data/overall_comp_matrix.csv") %>%
+  mutate(year = as.factor(year))
+
+data_native_sp_matrix <- read.csv("analyses_manuscript/processed_data/native_comp_matrix.csv") %>%
+  mutate(year = as.factor(year))
+
+data_exotic_forb_matrix <- read.csv("analyses_manuscript/processed_data/exoticforb_comp_matrix.csv") %>%
+  mutate(year = as.factor(year))
+```
+
+## Calculate diversity and relative abundance variables
+
+```{r}
+# Retrieve species list
+data_sp_matrix %>% 
+  colnames() %>% 
+  sort()
+```
+
+Calculate abundances of exotic grasses, native forbs, and exotic forbs in each plot.
+
+```{r}
+# Import species list with provenance and group
+species_list_df <- read.csv("analyses_manuscript/raw_data/20230918_CHRRP_species_list.csv") %>%
+  rename('species_code' = 'hexcode')
+species_list_df
+
+data_form <- data_sp_matrix %>%
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "species_code",
+    values_to = "abundance"
+  ) %>%
+  # Join the species-provenance/growth form group pairs
+  left_join(species_list_df, by = "species_code") %>%
+  # Remove BG and LIT which we will deal with later
+  filter(species_code != "BG",
+         species_code != "LIT") %>%
+  # Create new variable for provenance/growth form groups
+  unite(
+    group, provenance, growth_form, sep = "_", remove = FALSE
+  ) %>%
+  # Calculate the total abundance for each group in each plot
+  group_by(year, plot, treatment, group) %>%
+  summarise(total_abundance = sum(abundance)) %>%
+  # Create a new variable for year-treatment groups
+  unite(year_treatment, year, treatment, remove = FALSE) %>%
+  as.data.frame()
+
+# Create new data frame with the abundances of each species group
+data_form_wide <- data_form %>%
+  pivot_wider(names_from = group,
+              values_from = total_abundance,
+              values_fill = 0)
+
+head(data_form_wide)
+```
+
+Calculate alpha diversity statistics.
+
+First create the matrices. It is critical that these are correct as any errors will disrupt downstream analyses.
+
+```{r}
+head(data_sp_matrix)
+head(data_native_sp_matrix)
+head(data_exotic_forb_matrix)
+
+# Extract composition only from matrix
+comp <- data_sp_matrix %>% 
+  select(where(is.numeric)) %>%
+  select(-BG,
+         -LIT)
+
+head(comp)
+
+comp_native <- data_native_sp_matrix %>%
+  select(where(is.numeric)) %>%
+  select(-BG,
+         -LIT)
+
+head(comp_native)
+
+comp_exotic_forb <- data_exotic_forb_matrix %>%
+  select(where(is.numeric)) %>%
+  select(-BG,
+         -LIT)
+head(comp_exotic_forb)
+```
+
+```{r}
+# Calculate species richness and Shannon diversity for overall community
+sprich <- specnumber(comp) # species richness
+shannon <- diversity(comp, index = "shannon") # shannon diversity
+
+data_overall_alpha <- data.frame(sprich, shannon) %>%
+  # Add in plot info
+  bind_cols(data_sp_matrix %>% select(!where(is.numeric)))
+head(data_overall_alpha)
+
+# Calculate species richness and Shannon diversity for only native species
+sprich_native <- specnumber(comp_native) # species richness
+shannon_native <- diversity(comp_native, index = "shannon")
+
+data_native_alpha <- data.frame(sprich_native, shannon_native) %>%
+  bind_cols(data_native_sp_matrix %>% select(!where(is.numeric)))
+head(data_native_alpha)
+
+# Calculate species richness and Shannon diversity for exotic forbs
+sprich_exotic_forbs <- specnumber(comp_exotic_forb) # species richness
+shannon_exotic_forbs <- diversity(comp_exotic_forb, index = "shannon")
+
+data_exotic_forb_alpha <- data.frame(sprich_exotic_forbs, shannon_exotic_forbs) %>%
+  bind_cols(data_exotic_forb_matrix %>% select(!where(is.numeric)))
+head(data_exotic_forb_alpha)
+```
+
+Combine to get a final df with all of the response variables for each plot.
+
+```{r}
+data_diversity <- data_form_wide %>%
+  # Join overall alpha diversity variables
+  left_join(data_overall_alpha, by = c("plot", "year", "treatment", "year_treatment")) %>%
+  # Join native alpha diversity variables
+  left_join(data_native_alpha, by = c("plot", "year", "treatment", "year_treatment")) %>%
+  # Join exotic forb alpha diversity variables
+  left_join(data_exotic_forb_alpha, by = c("plot", "year", "treatment", "year_treatment")) %>%
+  # Create new variables for row, column, and position of each plot
+  separate(
+    plot,
+    into = c("row", "column", "position"),
+    sep = "_",
+    remove = FALSE
+  ) %>%
+  # Set column to numeric to ensure correct rearranging
+  mutate(column = as.numeric(column)) %>%
+  # Reorder by year, row, column, position
+  arrange(year, row, column, position)
+
+head(data_diversity)
+```
+
+We now have a data frame with all of our diversity variables calculated.
+
+## Calculate litter
+
+Import soil cover df.
+
+```{r}
+soil_cover <- read.csv("analyses_manuscript/processed_data/overall_comp_matrix.csv") %>%
+  mutate(year = as.factor(year)) %>%
+  select(plot, year, treatment, BG, LIT)
+soil_cover
+```
+
+Join litter/soil cover with response variables.
+
+```{r}
+data_diversity_lit <- soil_cover %>%
+  full_join(data_diversity, by = c("plot", "year", 'treatment'))
+head(data_diversity_lit)
+```
+
+```{r}
+data_diversity_lit %>%
+  ggplot(aes(x=LIT)) +
+  facet_wrap(treatment ~ year) +
+  geom_histogram()
+```
+
+## Calculate areal cover
+
+```{r}
+areal_cover <- read.csv("analyses_manuscript/processed_data/areal_cover_variables.csv") %>%
+  mutate(year = as.factor(year))
+head(areal_cover)
+```
+
+```{r}
+data_diversity_lit_cover <- data_diversity_lit %>%
+  full_join(areal_cover, by = c('year', 'plot', 'treatment'))
+head(data_diversity_lit_cover)
+```
+
+## Combine all response variables
+
+```{r}
+# Add some more relevant variables for analysis
+
+all_analysis_variables <- data_diversity_lit_cover %>%
+  # Add blocks
+  unite(block, row, column, sep = "_", remove = FALSE) %>%
+  # Add number of years raked
+  mutate(
+    years_raked = case_match(
+      year_treatment,
+      '2021_unraked' ~ 0,
+      '2021_raked' ~ 0,
+      '2022_unraked' ~ 0,
+      '2022_raked' ~ 1,
+      '2023_unraked' ~ 0,
+      '2023_raked' ~ 2
+    )
+  )
+
+head(all_analysis_variables)
+```
+
+## Basic exploratory analysis
+
+Look at the range of values for the response variables.
+
+```{r}
+summary(all_analysis_variables)
+```
+
+### Visualize data
+
+Create a table of summary statistics.
+
+```{r}
+all_analysis_variables_long <- all_analysis_variables %>%
+  select(
+    plot, year, treatment, 
+         # Soil cover
+         BG,
+         LIT,
+         # Relative abundances of groups
+         exotic_forb,
+         exotic_grass,
+         native_forb,
+         # Cover of groups
+         exotic_forb_cover,
+         exotic_grass_cover,
+         native_forb_cover,
+         # Alpha diversity
+         sprich,
+         sprich_native,
+         shannon,
+         shannon_native,
+        sprich_exotic_forbs,
+        shannon_exotic_forbs
+    ) %>%
+  pivot_longer(cols = 4:length(.),
+               names_to = "metric",
+               values_to = "value") %>%
+  # Create formatted variable names
+  mutate(metric_name_f = case_when(
+    metric == 'BG' ~ 'bare ground',
+    metric == 'LIT' ~ 'litter soil cover',
+    
+    metric == 'exotic_forb' ~ 'exotic forb relative abundance',
+    metric == 'exotic_forb_cover' ~ 'exotic forb areal cover',
+    
+    metric == 'exotic_grass' ~ 'exotic grass relative abundance',
+    metric == 'exotic_grass_cover' ~ 'exotic grass areal cover',
+    
+    metric == 'native_forb' ~ 'native forb relative abundance',
+    metric == 'native_forb_cover' ~ 'native forb areal cover',
+    
+    metric == 'sprich' ~ 'species richness',
+    metric == 'sprich_native' ~ 'native species richness',
+    metric == 'sprich_exotic_forbs' ~ 'exotic forb species richness',
+    
+    metric == 'shannon' ~ 'Shannon diversity',
+    metric == 'shannon_native' ~ 'native Shannon diversity',
+    metric == 'shannon_exotic_forbs' ~ 'exotic forb Shannon diversity'
+  ))
+
+summary_all_variables <- all_analysis_variables_long %>%
+  group_by(year, treatment, metric, metric_name_f) %>%
+  summarise(
+    mean = mean(value),
+    sd = sd(value),
+    se = sd(value) / sqrt(length(value)),
+    n = length(value)
+  ) %>%
+  ungroup() %>%
+  arrange(year, treatment, metric) %>%
+  as.data.frame() %>%
+  # Add column for the y-axis labels
+  mutate(
+    y_axis_label = case_when(
+      metric == 'BG' ~ 'areal cover proportion',
+      metric == 'LIT' ~ 'areal cover proportion',
+      
+      metric == 'exotic_forb' ~ 'relative abundance',
+      metric == 'exotic_forb_cover' ~ 'areal cover proportion',
+      
+      metric == 'exotic_grass' ~ 'relative abundance',
+      metric == 'exotic_grass_cover' ~ 'areal cover proportion',
+      
+      metric == 'native_forb' ~ 'relative abundance',
+      metric == 'native_forb_cover' ~ 'areal cover proportion',
+      
+      metric == 'sprich' ~ 'species per plot',
+      metric == 'sprich_native' ~ 'species per plot',
+      metric == 'sprich_exotic_forbs' ~ 'species per plot',
+      
+      metric == 'shannon' ~ "H'",
+      metric == 'shannon_native' ~ "H'",
+      metric == 'shannon_exotic_forbs' ~ "H'"
+    )
+  )
+  
+summary_all_variables
+
+```
+
+```{r}
+# Visualize all means, SEs, and raw data
+p_means_all_vars <- summary_all_variables %>%
+  ggplot(aes(
+    x = year,
+    y = mean,
+    color = treatment,
+    fill = treatment,
+    group = treatment
+  )) +
+  # Add in raw data
+  geom_jitter(
+    inherit.aes = FALSE,
+    data = all_analysis_variables_long,
+    aes(
+      x = year,
+      y = value,
+      color = treatment,
+      fill = treatment,
+      group = treatment
+    ),
+    height = 0,
+    width = 0.2,
+    alpha = 0.2
+  ) +
+  # Display means
+  geom_errorbar(
+    aes(ymin = mean - se,
+        ymax = mean + se),
+    width = 0.3,
+    alpha = 0.9,
+    linewidth = 0.8
+  ) +
+  geom_line() +
+  geom_point(shape = 21, color = "black") +
+  facet_wrap(
+    "metric_name_f",
+    nrow = 5,
+    ncol = 3,
+    scales = "free_y"
+  ) +
+  ylab("value") + # placeholder, will adjust below
+  scale_color_manual(values = c(
+    "raked" = "antiquewhite4",
+    "unraked" = "darkgoldenrod2"
+  )) +
+  scale_fill_manual(values = c(
+    "raked" = "antiquewhite4",
+    "unraked" = "darkgoldenrod2"
+  )) +
+  theme_Publication() +
+  theme(legend.position = "bottom") +
+  labs(title = "(a) Means +/- S.E. for all diversity & group abundance variables")
+  
+p_means_all_vars
+```
+
+Plot again but this time with a loop to allow y-axis labels to vary.
+
+```{r}
+# This must be in a logical order for combining the plots below
+
+all_vars <- c(
+  "bare ground",
+  "litter soil cover",
+  "exotic forb relative abundance", 
+  "exotic forb areal cover",
+  "exotic grass relative abundance",
+  "exotic grass areal cover",
+  "native forb relative abundance", 
+  "native forb areal cover",         
+  "Shannon diversity",      
+  "exotic forb Shannon diversity",  
+  "native Shannon diversity",    
+  "species richness",
+  "exotic forb species richness",
+  "native species richness"
+)
+
+all_vars
+
+plot_all_vars <- function(vars, spread_metric) {
+  
+  plots_list <- list()
+  
+  for (var in all_vars) {
+    
+    # print(var)
+    
+    raw_points <- all_analysis_variables_long %>%
+      filter(metric_name_f == var)
+    
+    summary_points <- summary_all_variables %>%
+      filter(metric_name_f == var)
+    
+    y_label <- summary_points %>% 
+      select(y_axis_label) %>%
+      distinct() %>% 
+      pull(y_axis_label)
+    
+    plot_title <- summary_points %>%
+      select(metric_name_f) %>%
+      distinct() %>% 
+      pull(metric_name_f)
+    
+    # If the variable name is long, add a newline character
+    if (nchar(plot_title) > 15) {
+      # Split the title and insert newline after the third word
+      plot_title_fmd <- if (str_count(plot_title, "\\S+") > 3) {
+        str_replace(plot_title, str_c(word(plot_title, 2), " "), str_c(word(plot_title, 2), "\n"))
+      } else {
+        plot_title_fmd <- plot_title  # If fewer than 3 words, keep it as is
+      }
+    } else {
+      plot_title_fmd <- plot_title
+    }
+    
+    # Make plot  
+    plot <- summary_points %>%
+      ggplot(aes(
+        x = year,
+        y = mean,
+        color = treatment,
+        fill = treatment,
+        group = treatment
+      )) +
+      # Add in raw data
+      geom_jitter(
+        inherit.aes = FALSE,
+        data = raw_points,
+        aes(
+          x = year,
+          y = value,
+          color = treatment,
+          fill = treatment,
+          group = treatment
+        ),
+        height = 0,
+        width = 0.2,
+        alpha = 0.2
+      ) +
+      # Display means
+      geom_errorbar(
+        aes(ymin = mean - .data[[spread_metric]],
+            ymax = mean + .data[[spread_metric]]),
+        width = 0.3,
+        alpha = 0.9,
+        linewidth = 0.8
+      ) +
+      geom_line() +
+      geom_point(shape = 21, color = "black") +
+      # Formatting
+      ylab(y_label) +
+      labs(title = plot_title_fmd) +
+      scale_color_manual(values = c(
+        "raked" = "antiquewhite4",
+        "unraked" = "darkgoldenrod2"
+      )) +
+      scale_fill_manual(values = c(
+        "raked" = "antiquewhite4",
+        "unraked" = "darkgoldenrod2"
+      )) +
+      theme_Publication() +
+      theme(legend.position = "bottom") +
+      theme(
+      text = element_text(size = 9),         
+      axis.title = element_text(size = 9),
+      axis.text = element_text(size = 9), 
+      plot.title = element_text(size = 9),
+      plot.margin = unit(c(0.2, 0.2, 0.2, 0.2), "cm"))
+    
+    # print(plot)
+    
+    plots_list[[var]] <- plot
+    
+  }
+
+  combined_plots <- ggpubr::ggarrange(plotlist = plots_list,
+                                 common.legend = TRUE,
+                                 legend = "right",
+                                 nrow = 5,
+                                 ncol = 3)
+  
+  return(combined_plots)
+
+}
+```
+
+```{r}
+# Make mean +/- SE plot
+mean_se_plots <- plot_all_vars(vars = all_vars, spread_metric = "se")
+
+# Add title
+final_mean_se_plots <- ggpubr::annotate_figure(
+    mean_se_plots,
+    top = text_grob("(a) Means +/- S.E. for all diversity & group abundance variables", 
+                    size = 14, 
+                    face = "bold")
+  )
+
+final_mean_se_plots
+```
+
+```{r}
+# Visualize standard deviation
+p_sd_all_vars <- summary_all_variables %>%
+  ggplot(aes(
+    x = year,
+    y = mean,
+    color = treatment,
+    fill = treatment,
+    group = treatment
+  )) +
+  # Add in raw data
+  geom_jitter(
+    inherit.aes = FALSE,
+    data = all_analysis_variables_long,
+    aes(
+      x = year,
+      y = value,
+      color = treatment,
+      fill = treatment,
+      group = treatment
+    ),
+    height = 0,
+    width = 0.2,
+    alpha = 0.2
+  ) + 
+  # Display means
+  geom_errorbar(
+    aes(ymin = mean - sd,
+        ymax = mean + sd),
+    width = 0.3,
+    alpha = 0.9,
+    linewidth = 0.8
+  ) +
+  geom_line() +
+  geom_point(shape = 21, color = "black") +
+  facet_wrap("metric_name_f",
+             nrow=5,
+             ncol=3,
+           scales = "free_y") +
+  ylab("value") +
+  scale_color_manual(values = c("raked" = "antiquewhite4", "unraked" = "darkgoldenrod2")) +
+  scale_fill_manual(values = c("raked" = "antiquewhite4", "unraked" = "darkgoldenrod2")) +
+  theme_Publication() +
+  theme(legend.position = "bottom") +
+  labs(title = "(b) Means +/- S.D. for all diversity & group abundance variables")
+p_sd_all_vars
+```
+
+```{r}
+# Use the previous plotting function to create a figure with y-axis labels that correspond to the scale of each variable, but plotting standard deviation as the error bar
+
+mean_sd_plots <- plot_all_vars(vars = all_vars, spread_metric = "sd")
+
+# Add title
+final_mean_sd_plots <- ggpubr::annotate_figure(
+   mean_sd_plots,
+    top = text_grob("(a) Means +/- S.D. for all diversity & group abundance variables", 
+                    size = 14, 
+                    face = "bold")
+  )
+
+final_mean_sd_plots
+```
+
+## Export S.D. & S.E. figures
+
+```{r}
+# Save Figure S3a
+ggsave(
+  "analyses_manuscript/figures/supplemental_figures/fig_S3a_means_se_all_response_variables.jpg",
+  plot = final_mean_se_plots,
+  bg = "white",
+  device = "png",
+  height = 10,
+  width = 8.4,
+  units = "in",
+  scale = 1,
+  dpi = 300
+)
+
+ggsave(
+  "analyses_manuscript/figures/supplemental_figures/fig_S3a_means_se_all_response_variables.pdf",
+  plot = final_mean_se_plots,
+  bg = "white",
+  device = "pdf",
+  height = 10,
+  width = 8.4,
+  units = "in",
+  scale = 1
+)
+
+# Save Figure S3b
+ggsave(
+  "analyses_manuscript/figures/supplemental_figures/fig_S3b_means_sd_all_response_variables.jpg",
+  plot = final_mean_sd_plots,
+  bg = "white",
+  device = "png",
+  height = 10,
+  width = 8.4,
+  units = "in",
+  scale = 1,
+  dpi = 300
+)
+
+ggsave(
+  "analyses_manuscript/figures/supplemental_figures/fig_S3b_means_sd_all_response_variables.pdf",
+  plot = final_mean_sd_plots,
+  bg = "white",
+  device = "pdf",
+  height = 10,
+  width = 8.4,
+  units = "in",
+  scale = 1
+)
+```
+
+## Export data summary
+
+Export the data frame.
+
+```{r}
+write.csv(all_analysis_variables,
+          file = "analyses_manuscript/processed_data/analysis_variables.csv",
+          row.names =  FALSE)
+```
+
+Export the summary statistics.
+
+```{r}
+write.csv(summary_all_variables,
+          file = "analyses_manuscript/stats_results/summary_of_response_variables.csv",
+          row.names =  FALSE)
+```
+
+## Basic summary numbers
+
+### Means & Effect Sizes
+
+How much higher was native forb abundance and exotic forb abundance in treatment plots compared to control plots across 2022 and 2023?
+
+```{r}
+raked_v_unraked_forbs <- all_analysis_variables %>%
+  filter(year != 2021) %>%
+  group_by(treatment) %>%
+  summarise(
+    native_forb_mean = mean(native_forb),
+    exotic_forb_mean = mean(exotic_forb)
+  ) %>%
+  pivot_longer(
+    cols = c(native_forb_mean, exotic_forb_mean),
+    names_to = "metric"
+  ) %>%
+  pivot_wider(
+    names_from = treatment
+  ) %>%
+  mutate(
+    diff_raked_unraked = raked - unraked
+  )
+
+raked_v_unraked_forbs
+```
+
+What was exotic forb richness and Shannon diversity on average?
+
+```{r}
+summary_all_variables %>%
+  filter(metric == "sprich_exotic_forbs") %>%
+  arrange(mean)
+
+summary_all_variables %>%
+  filter(metric == "shannon_exotic_forbs") %>%
+  arrange(mean)
+  
+```
+
+```{r}
+all_analysis_variables %>%
+  pull(sprich_exotic_forbs) %>%
+  mean()
+```
+
+What was the greatest difference in species richness among treatments, within years?
+
+```{r}
+sprich_among_trt_by_year <- summary_all_variables %>%
+  filter(metric == "sprich") %>%
+  select(year, treatment, metric, mean) %>%
+  pivot_wider(
+    names_from = metric,
+    names_prefix = "mean_",
+    values_from = mean
+  ) %>%
+  pivot_wider(
+    id_cols = year,
+    names_from = treatment,
+    values_from = mean_sprich
+  ) %>%
+  mutate(
+    diff_in_mean_sprich = raked-unraked
+  )
+
+sprich_among_trt_by_year
+  
+```
+
+### Species List
+
+```{r}
+species_list_for_project <- data_sp_matrix %>%
+  select(-plot, -year, -treatment, -year_treatment, # these are plot-level identifiers
+         -BG, -LIT # not species
+         ) %>%
+  colnames() %>%
+  as.data.frame() %>%
+  set_names("species_code") %>%
+  mutate(
+    known_in_site = "found in 2021-2023 study"
+  ) %>%
+  full_join(species_list_df, by = "species_code") %>%
+  mutate(
+    known_in_site = case_when(
+      is.na(known_in_site) ~ "known to be at site, found in previous study (unpublished data)",
+      TRUE ~ known_in_site
+    )
+  ) %>%
+  select(species_code, species.name, provenance, growth_form, known_in_site)
+  
+
+species_list_for_project
+```
+
+```{r}
+# Cross-reference with the more raw data
+long_data <- read.csv("analyses_manuscript/processed_data/long_data.csv")
+
+species_from_long_data <- long_data %>% 
+  distinct(species_code) %>%
+  arrange(species_code) %>% 
+  filter(species_code != "BG",
+         species_code != "LIT") %>%
+  mutate(check = "in raw data")
+
+species_list_for_project %>%
+  filter(known_in_site == "found in 2021-2023 study") %>%
+  full_join(species_from_long_data, by = "species_code")
+```
+
+```{r}
+# Export species list
+
+write.csv(species_list_for_project,
+          file = "analyses_manuscript/stats_results/species_list_for_project.csv",
+          row.names =  FALSE)
+
+```
+

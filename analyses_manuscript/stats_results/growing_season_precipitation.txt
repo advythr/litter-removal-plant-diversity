@@ -1,0 +1,4 @@
+growing_season total_ppt_inches total_ppt_mm
+2020-2021 growing season 4.36 110.744
+2021-2022 growing season 4.83 122.682
+2022-2023 growing season 13.32 338.328

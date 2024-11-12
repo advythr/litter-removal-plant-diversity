@@ -1,0 +1,370 @@
+---
+title: "Cumulative raking models"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Note**
+
+The models in this analysis were not used to draw inferences. This was due to the limited information provided by using years raked as a continuous variable, which conflates differences among years in annual precipitation with differences due to possible cumulative effects of raking (i.e., compounding effects of multiple years of litter removal).
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(cowplot)
+library(ggeffects)
+library(lme4)
+library(glmmTMB)
+library(car)
+library(emmeans)
+library(stringr)
+library(performance)
+library(purrr)
+library(gridExtra)
+
+load("analyses_manuscript/theme_function.R")
+```
+
+
+```{r}
+analysis.df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year)) %>%
+  mutate(log_shannon_native = log(shannon_native + 1)) %>%
+  mutate(shannon_native_backtransform = exp(log_shannon_native)-1)
+
+analysis.only.raked.df <- analysis.df %>%
+  filter(treatment == "raked")
+```
+
+## Function to test models
+
+```{r}
+test_cumulative_raking_model <- function(fitted_model) {
+  
+  chisqAnova <- car::Anova(fitted_model)
+  
+  print(chisqAnova)
+  
+  # Extract p-value for the treatment*year interaction term
+  pval <- chisqAnova$'Pr(>Chisq)'[1]
+  pval.r <- ifelse(
+    pval < 0.001,
+    "< 0.001",
+    round(pval, digits = 3)
+  )
+
+  # Assess significance of p-value
+  significance <- ifelse(pval < 0.05,
+                       "*",
+                       "N.S.")
+  pval_signif <- paste(pval.r, significance, sep = " ")
+    
+  print(pval_signif)
+  
+  return(pval_signif)
+}
+```
+
+## Function to plot models
+
+```{r}
+plot_cumulative_raking_model <- function(fitted_model, response_variable, response_name, dataset, pval) {
+  
+  # Check validity
+  print(check_model(fitted_model))
+  
+  # Calculate p-value
+  pval = test_cumulative_raking_model(fitted_model)
+
+  # Format p-value label
+  significance_label <- paste("p-value:", pval, sep = " ")
+  # rv_vec <- dataset[[response_variable]]
+  # label_position_x <- 2
+  # label_position_y <- max(rv_vec) + (max(rv_vec) * 0.05)
+  
+  # Format plot title
+  plot_title <- paste(
+    paste(response_name, ",", sep = ""),
+          significance_label, sep = " ") # if a different format is desired
+  # plot_title <- significance_label
+  
+  # Compute predicted values
+  predicted_values <- ggpredict(fitted_model, terms = "years_raked")
+
+  # Make plot
+  model_plot <- plot(predicted_values) +
+    geom_jitter(
+      data = dataset,
+      aes_string(
+        x = "years_raked",
+        y = response_variable,
+        fill = "treatment",
+        color = "treatment"
+        ),
+      alpha = 0.3,
+      shape = 16,
+      width = 0.1,
+      height = 0,
+      size = 3
+      ) +
+    scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+    scale_color_manual(
+      values = c("antiquewhite4", "darkgoldenrod2"),
+      guide = guide_legend(override.aes = list(alpha = 1))
+    ) +
+  # labs(title = plot_title) +
+  theme_Publication() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 12)) +
+  ylab(response_name) +
+  xlab("years of raking") +
+  labs(title = NULL) +
+  scale_x_continuous(breaks = c(0, 1, 2)) +
+  # If label should be added as an inset:
+  # geom_text(aes(x = label_position_x,
+  #               y = label_position_y),
+  # label = significance_label,
+  # hjust = 1,
+  # vjust = 1,
+  # size = 4,
+  # color = "black") +
+  annotate("text", x = Inf, y = Inf, label = paste(significance_label), vjust = 2, hjust = 2)
+
+
+  return(model_plot)
+}
+
+```
+
+
+# Individual year models
+
+### Species richness
+
+```{r}
+
+sprich_fm <- glmer(sprich ~ years_raked + (1|plot),
+                     family = "poisson",
+                     data = analysis.only.raked.df)
+  
+print(sprich_fm)
+
+p_sprich_cml <- plot_cumulative_raking_model(
+  fitted_model = sprich_fm,
+  response_variable = "sprich",
+  response_name = "Species richness",
+  dataset = analysis.only.raked.df
+)
+p_sprich_cml
+```
+
+### Native species richness
+
+```{r}
+  
+sprich_native_fm <- glmer(sprich_native ~ years_raked + (1|plot),
+                   family = "poisson",
+                   data = analysis.only.raked.df)
+  
+p_sprich_native_cml <- plot_cumulative_raking_model(
+  fitted_model = sprich_native_fm,
+  response_variable = "sprich_native",
+  response_name = "Native species richness",
+  dataset = analysis.only.raked.df,
+)
+p_sprich_native_cml
+
+```
+
+```{r}
+
+shannon_fm <- lmer(shannon ~ years_raked + (1|plot),
+                 data = analysis.only.raked.df)
+
+p_shannon_cml <- plot_cumulative_raking_model(
+  fitted_model = shannon_fm,
+  response_variable = "shannon",
+  response_name = "Shannon diversity",
+  dataset = analysis.only.raked.df
+)
+p_shannon_cml
+```
+
+### Shannon Native
+
+```{r}
+
+shnat_fm <- glmmTMB(log_shannon_native ~ years_raked + (1|plot),
+                      ziformula=~1,
+                      data = analysis.only.raked.df,
+                      family = beta_family())
+  
+p_shannon_native_cml <- plot_cumulative_raking_model(
+  fitted_model = shnat_fm,
+  response_variable = "shannon_native",
+  response_name = "Native Shannon diversity",
+  dataset = analysis.only.raked.df
+)
+p_shannon_native_cml
+```
+
+### Exotic forb
+
+```{r}
+
+ef_fm <- glmmTMB(exotic_forb ~ years_raked + (1|plot),
+                      ziformula=~1,
+                      data = analysis.only.raked.df,
+                      family= beta_family()
+                 )
+
+p_exotic_forb_cml <- plot_cumulative_raking_model(
+  fitted_model = ef_fm,
+  response_variable = "exotic_forb",
+  response_name = "Exotic forb abundance",
+  dataset = analysis.only.raked.df
+)
+p_exotic_forb_cml
+
+```
+
+### Native forb
+
+```{r}
+  
+nf_fm <- glmmTMB(native_forb ~ years_raked + (1|plot),
+                      ziformula=~1,
+                      data = analysis.only.raked.df,
+                      family= beta_family()
+)
+
+p_native_forb_cml <- plot_cumulative_raking_model(
+  fitted_model = nf_fm,
+  response_variable = "native_forb",
+  response_name = "Native forb abundance",
+  dataset = analysis.only.raked.df
+)
+
+p_native_forb_cml
+
+```
+
+## Format and export plots
+
+```{r}
+arrange_plots <- function(title, plots_list, ymin, ymax) {
+  
+  plots_adjusted_list <- list()
+
+    for (plot_name in names(plots_list)) {
+    
+    plot <- plots_list[[plot_name]]
+    plot_adj <- plot + ylim(min = ymin, max = ymax)
+    
+    plots_adjusted_list[[plot_name]] <- plot_adj
+}
+  return(plots_adjusted_list)
+  
+}
+```
+
+
+```{r}
+# Put all the variables with the same y-axis unit on the same y-scale
+
+sprich_as_unit_plots <- list(
+  p_sprich_cml = p_sprich_cml,
+  p_sprich_native_cml = p_sprich_native_cml)
+
+sprich_as_unit_plots_adj <- arrange_plots(
+  plots_list = sprich_as_unit_plots, ymin = 0, ymax = 14)
+
+sprich_as_unit_plots_adj
+
+shannon_as_unit_plots <- list(
+  p_shannon_cml = p_shannon_cml,
+  p_shannon_native_cml = p_shannon_native_cml)
+
+shannon_as_unit_plots_adj <- arrange_plots(
+  plots_list = shannon_as_unit_plots, ymin = 0, ymax = 2)
+
+shannon_as_unit_plots_adj
+
+abundance_as_unit_plots <- list(
+  p_exotic_forb_cml = p_exotic_forb_cml,
+  p_native_forb_cml = p_native_forb_cml)
+
+abundance_as_unit_plots_adj <- arrange_plots(
+  plots_list = abundance_as_unit_plots, ymin = 0, ymax = 1)
+
+abundance_as_unit_plots_adj
+
+# Combine all plots into a single list
+plots_by_unit_list <- list(sprich_as_unit_plots_adj,
+shannon_as_unit_plots_adj,
+abundance_as_unit_plots_adj)
+
+all_plots_list <- purrr::flatten(plots_by_unit_list)
+
+names(all_plots_list)
+```
+
+```{r}
+# Define plot order to be displayed
+
+order_of_plots <- c(
+  "p_sprich_cml", # not significant in global
+  "p_sprich_native_cml", # not significant in global
+  "p_shannon_cml",
+  "p_shannon_native_cml", # not significant in global
+  "p_exotic_forb_cml",
+  "p_native_forb_cml" # not significant in global
+)
+
+ordered_plots <- all_plots_list[order_of_plots]
+
+```
+
+```{r}
+# Arrange plots
+arranged_cumulative_raking_plots <- grid.arrange(grobs = ordered_plots, ncol = 2, nrow = 3)
+arranged_cumulative_raking_plots
+
+```
+
+```{r}
+ggsave(filename = "arranged_cumulative_raking_model_plots.pdf",
+         plot = arranged_cumulative_raking_plots,
+         path = "analyses_manuscript/figures",
+         width = 8,
+         height = 8,
+          scale = 1.2)
+```
+
+```{r}
+order_of_inference_plots <- c(
+  # "p_sprich_cml", # not significant in global
+  # "p_sprich_native_cml", # not significant in global
+  "p_shannon_cml", 
+  # "p_shannon_native_cml", # not significant in global
+  "p_exotic_forb_cml"
+  # "p_native_forb_cml" # not significant in global
+)
+
+ordered_inference_plots <- all_plots_list[order_of_inference_plots]
+
+# Arrange plots
+arranged_inference_cumulative_raking_plots <- grid.arrange(grobs = ordered_inference_plots, ncol = 2, nrow = 1)
+arranged_inference_cumulative_raking_plots
+```
+

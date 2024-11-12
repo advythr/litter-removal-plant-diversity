@@ -1,0 +1,618 @@
+---
+title: "final_models"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+final_figs_path <- file.path("analyses_manuscript/figures/final_manuscript_figures")
+```
+
+```{r}
+library(sjPlot)
+library(tidyverse)
+library(ggpubr)
+library(ggrepel)
+library(effects)
+library(cowplot)
+library(lme4)
+library(glmmTMB)
+library(car)
+library(emmeans)
+library(stringr)
+library(performance)
+
+load("analyses_manuscript/theme_function.R")
+```
+
+```{r}
+analysis_df <- read.csv("analyses_manuscript/processed_data/analysis_variables.csv") %>%
+  mutate(year = as.factor(year)) %>%
+  mutate(log_shannon_native = log(shannon_native + 1)) %>%
+  mutate(shannon_native_backtransform = exp(log_shannon_native)-1)
+```
+
+### Function to calculate p-values
+
+```{r}
+format_pval <- function(pval) {
+  
+  # Assess significance of p-values
+  pval_r <- ifelse(
+    pval < 0.001,
+    "< 0.001",
+    round(pval, digits = 3)
+  )
+  
+  significance <- ifelse(pval < 0.05,
+                       "*",
+                       "N.S.")
+  
+  pval_signif <- paste(pval_r, significance, sep = " ")
+    
+  return(pval_signif)
+  
+}
+```
+
+```{r}
+test_significance <- function(fitted_model) {
+  
+  model_p_values <- list()
+  
+  # Hypothesis testing with Anova() chisq test
+  chisqAnova <- car::Anova(fitted_model, component = "cond")
+  
+  # Extract p-value for the treatment*year interaction term
+  pval_int <- chisqAnova$'Pr(>Chisq)'[3]
+  pval_year <- chisqAnova$'Pr(>Chisq)'[2]
+  
+  # print(pval_year)
+  
+  pval_int_f <- format_pval(pval_int)
+  model_p_values[['int_pval']] <- pval_int_f
+  
+  pval_year_f <- format_pval(pval_year)
+  model_p_values[['year_pval']] <- pval_year_f
+  
+  return(model_p_values)
+  
+}
+```
+
+### Function to plot model
+
+```{r}
+plot_model <- function(response_variable, response_name, effects_table, dataset, fitted_model) {
+
+  # Test significance of parameters
+  test <- test_significance(fitted_model)
+  
+  pval_int <- test[['int_pval']]
+  pval_year <- test[['year_pval']]
+  
+  # Format label
+  significance_label = paste(
+    "treatment x year p-value:", pval_int, "\n",
+    "year p-value:", pval_year,
+    sep = " ")
+  
+  # Make plot
+  model_plot <- effects_table %>%
+    ggplot(aes(
+      x = year,
+      y = fit,
+      fill = treatment,
+      color = treatment,
+      group = treatment
+    )) +
+    geom_jitter(data = dataset,
+                aes_string(x = "year",
+                y = response_variable,
+                color = "treatment"),
+                alpha = 0.3,
+                shape = 16,
+                width = 0.3,
+                height = 0
+                ) +
+    geom_errorbar(
+      aes(ymin = lower_CL, ymax = upper_CL),
+      width = 0.2,
+      size = 1,
+      show.legend = FALSE
+    ) +
+    geom_line(linewidth = 1, show.legend = TRUE) +
+    geom_point(
+      shape = 21,
+      size = 4,
+      color = "black",
+      show.legend = FALSE
+    ) +
+    scale_fill_manual(values = c("antiquewhite4", "darkgoldenrod2")) +
+    scale_color_manual(
+      values = c("antiquewhite4", "darkgoldenrod2"),
+      guide = guide_legend(override.aes = list(alpha = 1))
+    ) +
+  labs(subtitle = response_name) +
+  ylab(response_name) +
+  xlab("Year") +
+  theme_Publication() +
+  # Modify our project plotting theme for this use case 
+  theme(legend.position = "right",
+        plot.title = element_text(size = 12),
+        plot.subtitle = element_text(face = "bold"),
+        axis.title.y = element_text(face = "plain")) +
+  # Add p-values from models
+  # annotate("text", x = Inf, y = Inf, label = paste(significance_label), vjust = 2, hjust = 1, size = 3.5)
+  labs(caption=paste(significance_label))
+  
+  print(model_plot)
+
+  return(model_plot)
+}
+
+```
+
+# Final global models
+
+### Species richness
+
+```{r}
+sprich_fm <- glmer(sprich ~ treatment*year + (1|block/plot),
+                   family = "poisson",
+                   data = analysis_df)
+
+emmeans_sprich_fm <- emmeans(sprich_fm, ~ treatment*year, component = "cond", type="response") %>%
+  as.data.frame() %>%
+  mutate(fit = rate,
+         se = SE,
+         lower_CL = asymp.LCL,
+         upper_CL = asymp.UCL
+         )
+emmeans_sprich_fm
+
+p_sprich <- plot_model(response_variable = "sprich",
+           response_name = "Species richness",
+           effects_table = emmeans_sprich_fm,
+           dataset = analysis_df,
+           fitted_model = sprich_fm
+           )
+
+
+p_sprich
+
+```
+
+### Native species richness
+
+```{r}
+sprich_native_fm <- glmer(sprich_native ~ treatment*year + (1|block/plot),
+                   family = "poisson",
+                   data = analysis_df)
+
+emmeans_sprich_native_fm <- emmeans(sprich_native_fm, ~ treatment*year, component = "cond", type="response") %>%
+  as.data.frame() %>%
+  mutate(fit = rate,
+         se = SE,
+         lower_CL = asymp.LCL,
+         upper_CL = asymp.UCL
+         )
+emmeans_sprich_native_fm
+
+p_sprich_native <- plot_model(response_variable = "sprich_native", 
+           response_name = "Native species richness",
+           effects_table = emmeans_sprich_native_fm,
+           dataset = analysis_df,
+           fitted_model = sprich_native_fm)
+```
+
+### Shannon
+
+```{r}
+shannon_fm <- lmer(shannon ~ treatment*year + (1|block/plot),
+                   data = analysis_df)
+
+
+emmeans_shannon_fm <- emmeans(shannon_fm, ~ treatment*year, component = "cond", type="response") %>%
+  as.data.frame() %>%
+  mutate(fit = emmean,
+         se = SE,
+         lower_CL = lower.CL,
+         upper_CL = upper.CL
+         )
+emmeans_shannon_fm
+
+p_shannon <- plot_model(response_variable = "shannon",
+           response_name = "Shannon diversity",
+           effects_table = emmeans_shannon_fm,
+           dataset = analysis_df,
+           fitted_model = shannon_fm)
+```
+
+### Shannon Native
+
+```{r}
+shnat_fm <- glmmTMB(log_shannon_native ~ treatment*year + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family = beta_family())
+
+
+emmeans_shannon_native_fm <- emmeans(shnat_fm, ~ treatment*year, component = "cond", type="response") %>%
+  as.data.frame() %>%
+  # Backtransform
+  mutate(fit = (exp(response) -1),
+         se = (exp(SE) -1),
+         lower_CL = (exp(asymp.LCL) -1),
+         upper_CL = (exp(asymp.UCL) -1)
+         )
+emmeans_shannon_native_fm
+
+p_shannon_native <- plot_model(response_variable = "shannon_native", 
+           response_name = "Native Shannon diversity",
+           effects_table = emmeans_shannon_native_fm,
+           dataset = analysis_df,
+           fitted_model = shnat_fm)
+
+```
+
+### Exotic forb
+
+```{r}
+ef_fm <- glmmTMB(exotic_forb ~ treatment*year + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family= beta_family()
+)
+
+emmeans_ef_fm <- emmeans(ef_fm, ~ treatment*year, component = "cond", type="response") %>%
+  as.data.frame() %>%
+  mutate(fit = response,
+         se = SE,
+         lower_CL = asymp.LCL,
+         upper_CL = asymp.UCL
+         )
+emmeans_ef_fm
+
+p_exotic_forb <- plot_model(response_variable = "exotic_forb", 
+           response_name = "Exotic forb abundance",
+           effects_table = emmeans_ef_fm,
+           dataset = analysis_df,
+           fitted_model = ef_fm
+           )
+```
+
+### Native forb
+
+```{r}
+nf_fm <- glmmTMB(native_forb ~ treatment*year + (1|block/plot),
+                        ziformula=~1,
+                        data = analysis_df,
+                        family= beta_family()
+)
+
+emmeans_nf_fm <- emmeans(nf_fm, ~ treatment*year, component = "cond", type="response") %>%
+  as.data.frame() %>%
+  mutate(fit = response,
+         se = SE,
+         lower_CL = asymp.LCL,
+         upper_CL = asymp.UCL
+         )
+emmeans_nf_fm
+
+p_native_forb <- plot_model(response_variable = "native_forb", 
+           response_name = "Native forb abundance",
+           effects_table = emmeans_nf_fm,
+           dataset = analysis_df,
+           fitted_model = nf_fm
+           )
+```
+
+## Annotate and export arranged plots.
+
+Add results from single year models to the plots.
+
+```{r}
+single_year_model_results <- read.csv("analyses_manuscript/stats_results/single_year_model_results.csv")
+
+single_year_model_info <- single_year_model_results %>%
+  mutate(
+    response_var = substr(model, 1, nchar(model) - 4),
+    year = substr(model, nchar(model) - 3, nchar(model))
+  ) %>%
+  mutate(
+    response_var_f = case_when(
+      response_var == "sprich_fm_" ~ "sprich",
+      response_var == "sprich_native_fm_" ~ "sprich_native",
+      response_var == "shannon_fm_" ~ "shannon",
+      response_var == "shnat_fm_" ~ "shannon_native",
+      response_var == "ef_fm_" ~ "exotic_forb",
+      response_var == "nf_fm_" ~ "native_forb"
+    )
+  )
+single_year_model_info
+
+  
+```
+
+Adjust axis limits for variables on the same scale.
+
+```{r}
+# Richness plots
+richness_max <- max(max(analysis_df$sprich), max(analysis_df$sprich_native))
+
+p_sprich_adj <- p_sprich + 
+  scale_y_continuous(limits = c(0, richness_max)) + 
+  ylab("richness")
+
+p_sprich_native_adj <- p_sprich_native + 
+  scale_y_continuous(limits = c(0, richness_max)) + 
+  ylab("richness")
+
+# Shannon plots
+H_max <- max(max(analysis_df$shannon), max(analysis_df$shannon_native))
+
+p_shannon_adj <- p_shannon + 
+  scale_y_continuous(limits = c(0, H_max)) + 
+  ylab("H'")
+
+p_shannon_native_adj <- p_shannon_native + 
+  scale_y_continuous(limits = c(0, H_max)) + 
+  ylab("H'")
+
+# Relative abundance plots
+relabund_max <- max(max(analysis_df$native_forb), max(analysis_df$exotic_forb))
+
+p_native_forb_adj <- p_native_forb + 
+  scale_y_continuous(limits = c(0, relabund_max)) + 
+  ylab("relative abundance")
+
+p_exotic_forb_adj <- p_exotic_forb + 
+  scale_y_continuous(limits = c(0, relabund_max)) + 
+  ylab("relative abundance")
+
+```
+
+```{r}
+# Make some aesthetic changes to the plots
+
+all_plots_list <- list(
+  p_sprich = p_sprich_adj,
+  p_sprich_native = p_sprich_native_adj,
+  p_shannon = p_shannon_adj,
+  p_shannon_native = p_shannon_native_adj,
+  p_exotic_forb = p_exotic_forb_adj,
+  p_native_forb = p_native_forb_adj
+)
+
+all_plots_with_single_year_info_list <- list()
+
+# Add headers
+panel_headers <- c("(a)", "(b)", "(c)", "(d)", "(e)", "(f)")
+
+# Function to remove y-labels
+remove_x_labels <- function(ggplot_obj) {
+    ggplot_obj + theme(axis.title.x = element_blank())
+}
+
+# Function to change y-axis label language for improved clarity
+richness_to_species_per_plot <- function(ggplot_obj) {
+  y_label <- ggplot_obj[["labels"]][["y"]]
+  
+  if (str_detect(y_label, "richness")) {
+    new_y_label <- str_replace(y_label, 
+                               "richness", 
+                               "species per plot")
+    
+    ggplot_obj[["labels"]][["y"]] <- new_y_label
+    
+  }
+  
+  return(ggplot_obj)
+}
+
+# Test
+richness_to_species_per_plot(p_sprich)
+richness_to_species_per_plot(p_sprich_native)
+
+```
+
+```{r}
+# Update plots
+
+for (i in seq_along(names(all_plots_list))) {
+  
+  plot_name <- names(all_plots_list)[i]
+  plot <- all_plots_list[[plot_name]]
+  
+  response_var <- substring(plot_name, first = 3)
+  print(response_var)
+  
+  # Calculate the y-location of where the labels should be
+  
+  ## if you want on the bottom
+  # plot_label_height <- 0
+  
+  ## if you want above data
+  plot_y_vals <- plot[['data']][['upper_CL']]
+  plot_y_vals_max <- max(plot_y_vals)
+  plot_label_height <- plot_y_vals_max + (plot_y_vals_max)*0.02
+  # print(paste("Plot label y-value is: ", plot_label_height))
+  
+  # Extract the information to annotate
+  results_for_that_response_var <- single_year_model_info %>%
+    filter(response_var_f == {{response_var}}) %>%
+    mutate(label_height = plot_label_height)
+
+  # Add single-year model p-values to the plot
+  plot_with_single_year_significance <- plot +
+    geom_text_repel(
+      inherit.aes = FALSE,
+      data = results_for_that_response_var,
+      aes(
+        x = year,
+        y = label_height,
+        label = paste("single-year model:", "\n", p_value_f, significance, sep = " ")
+      ),
+      size = 3.5,
+      nudge_y = 0.01,
+      segment.size = 0
+    )
+
+  # Add header alphabetical labels to the plot
+  plot_with_header <- plot_with_single_year_significance +
+    labs(title = panel_headers[i]) +
+    # Re-apply theme to correct any style elements overwritten by the annotation code
+    theme_Publication() +
+    theme(plot.title = element_text(hjust = 0)) +
+    theme(plot.subtitle = element_text(size = rel(1.2), face = "bold"))
+
+  
+  # Remove "year" y-label where not needed
+  panel_header <- panel_headers[i]
+  print(panel_header)
+  
+  redundant_year_labels <- c("(a)", "(b)", "(c)", "(d)")
+  
+  if (panel_header %in% redundant_year_labels) {
+    print("yes")
+    plot_with_header <- remove_x_labels(plot_with_header)
+    
+  }
+  
+  # Replace "richness" with "species per plot" for clarity, where needed
+  plot_with_updated_y_label <- richness_to_species_per_plot(plot_with_header)
+  
+  all_plots_with_single_year_info_list[[plot_name]] <- plot_with_updated_y_label 
+  
+}
+
+all_plots_with_single_year_info_list
+```
+
+```{r}
+arranged_global_model_plots <- ggarrange(plotlist = all_plots_with_single_year_info_list,
+                                         legend = "bottom",
+                                         common.legend = TRUE,
+                                        ncol = 2, nrow = 3)
+
+arranged_global_model_plots
+# Viewing this causes a view error due to the large size of all the elements
+# However the export below will produce a good result
+
+```
+
+```{r}
+ggsave(filename = "fig_3_global_models.pdf",
+         plot = arranged_global_model_plots,
+         path = final_figs_path,
+         width = 6.5,
+         height = 9,
+          scale = 1.5)
+
+ggsave(filename = "fig_3_global_models.jpg",
+         plot = arranged_global_model_plots,
+         path = final_figs_path,
+         width = 6.5,
+         height = 9,
+          scale = 1.5)
+```
+
+## Table of model results
+
+Save model results for all models.
+
+```{r}
+final_models_list <- list(sprich_fm = sprich_fm,
+                     sprich_native_fm = sprich_native_fm,
+                     shannon_fm = shannon_fm, 
+                     shnat_fm = shnat_fm, 
+                     ef_fm = ef_fm, 
+                     nf_fm = nf_fm)
+
+models_with_results_list <- list()
+for (model_name in names(final_models_list)) {
+  
+  model_info <- list()
+  
+  # Extract model object
+  model <- final_models_list[[model_name]]
+  
+  # Add model to a list of results for the model
+  model_info[[model_name]] <- model
+
+  # Add to Anova results to that list
+  model_results <- car::Anova(model, component = "cond")
+  model_info[["results"]] <- model_results
+  
+  models_with_results_list[[model_name]] <- model_info
+ 
+}
+
+models_with_results_list
+```
+
+```{r}
+make_results_table <- function(list_of_model_results) {
+  
+  results_table <- tibble(
+    predictor = character(),
+    Chisq = numeric(),
+    Df = numeric(),
+    `Pr(>Chisq)` = numeric(),
+    response_variable = character()
+    ) %>%
+    as_tibble()
+  
+  # Extract the model results from each model and put it in a table
+  for (model in list_of_model_results) {
+
+    results <- model[["results"]]
+
+    response_var <- attr(results, "heading")[2]
+
+
+    results_tibble <- results %>%
+      as.data.frame() %>%
+      rownames_to_column("predictor") %>%
+      as_tibble() %>%
+      mutate(response_variable = response_var) %>%
+      mutate(response_variable = sub("Response: ", "", response_variable)) %>%
+      mutate(model_type = "global") %>%
+      mutate(p_value_pretty = format_pval(`Pr(>Chisq)`))
+
+    results_table <- results_table %>%
+      bind_rows(results_tibble)
+
+  }
+  
+  return(results_table)
+  
+}
+```
+
+```{r}
+model_results_table <- make_results_table(models_with_results_list)
+
+model_results_table
+```
+
+Export the table.
+
+```{r}
+write.csv(
+  model_results_table,
+  file = "analyses_manuscript/stats_results/global_model_results.csv",
+  row.names = FALSE
+)
+```

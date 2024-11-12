@@ -1,0 +1,539 @@
+---
+title: "Data cleaning and processing"
+author: "Advyth Ramachandran"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    theme: journal
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(vegan)
+library(knitr)
+library(lubridate)
+```
+
+## Import data
+
+Ensure we are using the most recent and cleaned version of the data: check the dates of the file names for the dataset CSVs.
+
+```{r}
+# Import 2021 data
+plot_data_2021 <- read.csv("analyses_manuscript/raw_data/20230523-CHRRP-data-2021.csv") %>%
+  select(collected_date:hitnumber_5) %>%
+  mutate(year = "2021") %>%
+  filter(row != "I") %>% # Not analyzed due to error in application of treatments
+  mutate(hitnumber_6 = "") # Since there's a hit number 6 column in 2023, we need to add this to 2022
+
+# Import 2022 data
+plot_data_2022 <- read.csv("analyses_manuscript/raw_data/20221102-CHRRP-data-2022.csv") %>%
+  select(collected_date:hitnumber_5, gopher_hole) %>%
+  mutate(year = "2022") %>%
+  filter(row != "I") %>% # Not analyzed due to error in application of treatments
+  mutate(hitnumber_6 = "") # Since there's a hit number 6 column in 2023, we need to add this to 2022
+
+# Import 2023 data
+plot_data_2023 <- read.csv("analyses_manuscript/raw_data/20230523-CHRRP-data-2023.csv") %>%
+  select(collected_date:hitnumber_6) %>%
+  mutate(year = "2023") %>%
+  mutate(gopher_hole = case_when(grepl("hole", notes, ignore.case = TRUE) ~ "hole", .default = "")) %>% # Create a variable for gopher holes (not analyzed in manuscript due to having only one year of data)
+  select(-notes, -correction_notes) %>%
+  mutate(hitnumber_1 = toupper(hitnumber_1),
+         hitnumber_2 = toupper(hitnumber_2),
+         hitnumber_3 = toupper(hitnumber_3),
+         hitnumber_4 = toupper(hitnumber_4),
+         hitnumber_5 = toupper(hitnumber_5),
+         hitnumber_6 = toupper(hitnumber_6)) # Make all species codes upper case
+
+# Import a list of each of the plots and the treatments that were assigned
+treatments <- read.csv("analyses_manuscript/raw_data/treatment_table_20220922.csv") %>%
+  filter(row != "I")
+```
+
+Note that Row I was excluded because an error was discovered in 2022. In 2021, the plot markers (metal stakes) were not installed yet. The raking in 2021 was correct; the correct locations were raked. However in 2022, when the metal stakes were installed to permanently mark the plots, they were not installed at the correct positions based on the grid and based on the 2021 raking, and these "incorrect" locations were sampled in 2022. Therefore, the 2022 data for row I does not reflect responses of species composition to the treatments. Therefore, for the purpose of this analysis, I excluded row I.
+
+```{r}
+# Combine dataframes to make one dataframe with the whole dataset
+data <- plot_data_2021 %>% # start with 2021 data
+  bind_rows(plot_data_2022) %>% # add 2022 data
+  bind_rows(plot_data_2023) %>% # add 2023 data
+  full_join(treatments, by = c('row' = 'row', 'column' = 'column', 'position' = 'position')) # add treatment
+```
+
+## Data checking
+
+```{r}
+# What rows do we have?
+data %>%
+  group_by(year) %>%
+  distinct(row)
+
+# What columns do we have?
+data %>%
+  arrange(year, column) %>%
+  group_by(year) %>%
+  distinct(column)
+
+# Check for duplicate data for points per plot
+points_per_plot <- data %>%
+  group_by(year, row, column, position) %>%
+  summarise(
+    num_points = n())
+points_per_plot
+summary(points_per_plot)
+
+# The data looks clean, but let's visualize just to be sure
+points_per_plot %>%
+  ggplot(aes(x = num_points)) +
+  geom_histogram(stat = "count") +
+  facet_wrap("year")
+## this looks great!
+
+# Find plots with less than 90 points per plot
+points_per_plot %>%
+  filter(num_points < 90)
+
+# Check points per transect
+points_per_transect <- data %>%
+  group_by(year, row, column, position, transect) %>%
+  summarise(
+    num_points = n())
+
+# Visualize points per transect
+points_per_transect %>%
+  ggplot(aes(x = num_points)) +
+  geom_histogram(stat = "count")
+## Looks like we have some weird ones
+
+# Find which transect has more than 30 points
+points_per_transect %>%
+  filter(num_points != 30) %>%
+  filter(transect != "P") # we know all "P"s will have only one point, P
+## Looks like one plot in 2021
+
+# How many plots do we have?
+data %>%
+  group_by(year) %>%
+  distinct(row, column, position) %>%
+  summarise(
+    number = n()
+  )
+## This shows we are missing one plot in 2022, but we have all the 2021 plots covered. As noted in the digital Field Notebook, one plot was just not sampled in 2022 mistakenly.
+
+# What species do we have?
+species <- data %>%
+  pivot_longer(
+    cols = hitnumber_1:hitnumber_5,
+    names_to = "hit_number",
+    values_to = "species"
+  ) %>%
+  distinct(species) %>%
+  arrange(species)
+species
+## Looks like we have some lower case species codes and some with spaces at the end. We will clean that below.
+
+# What values do we have for gopher hole?
+unique(data$gopher_hole)
+```
+
+## Data cleaning
+
+Clean the data: standardize species codes.
+
+```{r}
+# Create a cleaned long df to use for analyses
+data.long <- data %>%
+  unite(plot, row, column, position, sep = "_", remove = FALSE) %>% # combine row, column, and position to create a column containing each plot's unique plot identifier
+  pivot_longer(
+    cols = c(hitnumber_1,
+             hitnumber_2,
+             hitnumber_3,
+             hitnumber_4,
+             hitnumber_5,
+             hitnumber_6),
+    names_to = "hitnumber",
+    values_to = "species_code") %>%
+  filter(species_code != "",
+         species_code != " ") %>% # remove blanks
+  mutate(species_code = toupper(species_code)) %>% # make all species codes uppercase for later
+  mutate(species_code = str_trim(species_code, side = "both")) %>% # remove white space in the species codes to ensure that the same species are identical in their notation.
+  select(-gopher_hole) %>% # for now, let's get rid of the gopher hole column because we are not analyzing it.
+  #mutate(across(gopher_hole, ~replace_na(.x, "not recorded"))) # this is an artifact for if we were analyzing gopher holes.
+  arrange(year, plot, transect, point, hitnumber)
+
+set.seed(123)
+slice_sample(data.long, n=10)
+```
+
+Check what species we have in the cleaned data.
+
+```{r}
+# Now check what species we have on the cleaned data
+species2 <- data.long %>%
+  distinct(species_code) %>%
+  arrange(species_code)
+print(species2, n = 100)
+```
+
+Looks like we have some species codes that are NONE.
+
+Check if we have multiple hits of the same species per point (duplicate hits).
+
+```{r}
+# Do we have any instances of multiple hits of the same species at the same point?
+multiple.species.hits <- data.long %>%
+  group_by(year, plot, transect, point, species_code) %>%
+  filter(n() > 1)
+nrow(multiple.species.hits)
+```
+
+We have 154 which is a tiny percentage of our data.
+
+Remove multiple species hits at the same point and NONEs.
+
+```{r}
+data.long2 <- data.long %>%
+  filter(species_code != "NONE") %>% # remove the NONEs
+  distinct(year,
+           plot,
+           transect,
+           point,
+           species_code,
+           .keep_all = TRUE) %>% # remove multiple hits of the same species per point
+  #mutate(plot = as.factor(plot)) %>%
+  arrange(year, row, column, position, transect, point, hitnumber)
+
+slice_sample(data.long2, n=10)
+```
+
+Check order of plots.
+
+```{r}
+data.long2 %>%
+  distinct(year, plot, transect)
+```
+
+Repair species names and indets. From colnames(data.matrix) we see there are four indets: LUPSP, SONCHUS, CRYSP, and UNKFORB1 that could not be identified to the species level.
+
+```{r}
+indets <- data.long2 %>%
+  filter(species_code == "LUPSP" |
+           species_code == "SONCHUS" |
+           species_code == "CRYSP" |
+           species_code == "UNKFORB1"
+        ) %>%
+  arrange(species_code)
+```
+
+How many hits does LUPSP represent?
+
+There are only two hits of this total out of 47,000+ hits. CRYSP, UNKFORB1, and SONCHUS also make up a tiny fraction of the data.
+
+```{r}
+print(nrow(indets) / nrow(data.long2))
+```
+
+
+Address the indets.
+
+```{r}
+data.long3 <- data.long2 %>%
+  mutate(species_code = case_match(species_code,
+    'SONCHUS' ~ 'SONOLE', # Sonchus is exceedingly likely to be SONOLE
+    'CRYSP' ~ "CRYINT", # CRYSP is exceedingly likely to be CRYINT
+    'OVAL' ~ 'CROSET', # This is a data entry error
+    .default = species_code
+  )) %>%
+  filter(species_code != "UNKFORB1" &
+           species_code != "LUPSP") # remove UNKFORB 1 and LUPSP
+head(data.long3)
+```
+
+Final species list.
+
+```{r}
+data.long3 %>% distinct(species_code) %>% arrange(species_code) %>% print(n = 100)
+```
+
+## Export processed data
+
+Export long data.
+
+```{r}
+write.csv(
+  data.long3,
+  "analyses_manuscript/processed_data/long_data.csv",
+  row.names = FALSE
+)
+```
+
+## Extract litter/soil cover variables
+
+```{r}
+# Calculate litter cover
+
+soil.cover <- data.long3 %>%
+  mutate(year = as.factor(year)) %>% # Make year a factor to allow for analysis
+  # Calculate soil cover, the bottom-most hit for each plot (should be BG or LIT)
+  distinct(year, plot, transect, point, species_code, .keep_all = TRUE) %>% # ensure each species_code hit is unique per point. We want NO duplicates of "species" (LIT, BARE) in each given point for the purposes of calculating ground cover.
+  filter(species_code == "LIT" |
+           species_code == "BG") %>%
+  separate(col = hitnumber,
+           into = c("hit", "hit_layer"),
+           sep = "_") %>%
+  group_by(year, plot, transect, point) %>%
+  filter(hit_layer == max(hit_layer)) %>% # select only the highest hit number (which is the lowest mass hit, i.e., the soil cover)
+  ungroup() %>%
+  group_by(year, plot, species_code) %>% # group by plot
+  summarise(treatment = treatment,
+            prop = n() / 90) %>% # there can be at most 90 soil cover points per plot
+  ungroup() %>%
+  distinct() %>%
+  rename("soil_cover" = species_code) %>%
+  pivot_wider(
+    id_cols = c(year, plot, treatment),
+    names_from = soil_cover,
+    values_from = prop,
+    values_fill = 0
+  ) %>%
+  pivot_longer(cols = c(BG, LIT),
+               names_to = "soil_cover",
+               values_to = "prop")
+
+slice_sample(soil.cover, n=10)
+summary(soil.cover$prop)
+```
+
+Check the soil cover data.
+
+```{r}
+# Inspect our new soil cover df and compare it to our long df to make sure all the plots are there
+data.long2 %>% 
+  distinct(plot, year) %>%
+  summary()
+
+summary(soil.cover)
+## checks out!
+```
+
+Make the soil cover df wide.
+
+```{r}
+
+# Make separate columns for BG and LIT for analysis
+soil.cover.wide <- soil.cover %>%
+  pivot_wider(names_from = soil_cover,
+              values_from = prop) %>%
+  unite(year_treatment, year, treatment, remove = FALSE)
+
+# Inspect the new df
+head(soil.cover.wide)
+summary(soil.cover.wide)
+
+```
+
+## Make site by species matrix
+
+Prepare data.
+
+Extract only the species data from the long df.
+
+```{r}
+data.long4 <- data.long3 %>%
+  select(-collected_date) %>%
+  filter(species_code != "LIT",
+         species_code != "BG") %>% # also remove non-species, but include presents with an abundance of 1 per plot
+  distinct(year,
+           plot,
+           transect,
+           point,
+           species_code,
+           .keep_all = TRUE) %>% # remove multiple hits of the same species per point (just to be sure, I did it again)
+  group_by(year,
+           row, column, position, 
+           species_code) %>% # considering unique plot identifiers, aggregate transects within plots
+  summarise(
+    plot = plot,
+    treatment = treatment,
+    count = n()
+  ) %>% # count number of hits of a species per plot
+  ungroup() %>%
+  distinct() # remove duplicate rows
+```
+
+Now pivot the data to wide format, that is, into a site by species matrix
+
+```{r}
+data.matrix <- data.long4 %>%
+  pivot_wider(
+    id_cols = c(year, plot, treatment),
+    values_from = count,
+    names_from = species_code,
+    names_sort = TRUE,
+    values_fill = 0
+  )
+```
+
+```{r}
+# Inspect the wide df
+colnames(data.matrix)
+length(data.matrix)
+
+# Check the totals for each plot
+data.matrix2 <- data.matrix %>%
+  mutate(sum = rowSums(across(4:25))) # make sure the correct number of columns is used
+## Note that these totals do NOT need to be around 90 because this is the total number of hits, and we sampled all strata per point. This is just to make sure we don't have any crazy numbers.
+sort(data.matrix2$sum)
+```
+
+# Save the matrix of hits.
+
+```{r}
+write.csv(data.matrix,
+          file = "analyses_manuscript/processed_data/overall_comp_matrix_hits.csv",
+          row.names = FALSE
+          )
+```
+
+### Matrix for overall composition
+
+Create a matrix for overall composition.
+
+```{r}
+# Relativize
+head(data.matrix)
+
+data.matrix.rel <- decostand((data.matrix[, 4:25]), method = "total")
+head(data.matrix.rel)
+
+# Glue the relativized df back to the plots and treatments
+data.matrix.rel.plots <- data.matrix %>%
+  select(plot, year, treatment) %>%
+  data.frame(data.matrix.rel)
+head(data.matrix.rel.plots)
+
+# Add columns for litter and bare ground 
+data.matrix.rel.plots.lit <- data.matrix.rel.plots %>%
+  left_join(soil.cover.wide, by = c('year', 'plot', 'treatment'))
+head(data.matrix.rel.plots.lit)
+
+```
+
+#### Export
+
+```{r}
+# Export the matrix
+write.csv(
+  data.matrix.rel.plots.lit,
+  "analyses_manuscript/processed_data/overall_comp_matrix.csv",
+  row.names = FALSE
+)
+```
+
+### Matrix for native forbs
+
+```{r}
+# Import species list with provenance and group
+species_list_df <- read.csv("analyses_manuscript/raw_data/20230918_CHRRP_species_list.csv") %>%
+  rename('species_code' = 'hexcode')
+species_list_df
+```
+
+
+Create a new site by species matrix for native forbs only.
+
+```{r}
+# To extract comp for native species, we need to relativize again
+comp.native <- data.matrix %>%
+  select(-plot, -year, -treatment) %>%
+  select(
+    -BRATOR,
+    -BRODIA,
+    -BROMAD,
+    -EROCIC,
+    -EROMOS,
+    -HORMUR,
+    -SISERY,
+    -SONOLE,
+    -SCHBAR
+  ) # remove the exotic species
+comp.native
+
+# Relativize native comp
+comp.native.rel <- decostand(comp.native, method = "total")
+head(comp.native.rel)
+
+# Glue the relativized df back to the plots and treatments
+comp.native.rel.plots <- data.matrix %>%
+  select(plot, year, treatment) %>%
+  data.frame(comp.native.rel)
+head(comp.native.rel.plots)
+
+# Add columns for litter and bare ground 
+comp.native.rel.plots.lit <- comp.native.rel.plots %>%
+  left_join(soil.cover.wide, by = c('year', 'plot', 'treatment'))
+head(comp.native.rel.plots.lit)
+```
+
+#### Export
+
+```{r}
+write.csv(
+  comp.native.rel.plots.lit,
+  "analyses_manuscript/processed_data/native_comp_matrix.csv",
+  row.names = FALSE
+)
+```
+
+### Matrix for exotic forbs
+
+Create site by species matrix for exotic forbs only.
+
+```{r}
+# To extract comp for exotic forb species, we need to relativize again
+head(data.matrix)
+
+comp.exoticforbs <- data.matrix %>%
+  select(-plot, -year, -treatment) %>%
+  select(
+    BRATOR,
+    EROCIC,
+    EROMOS,
+    SISERY,
+    SONOLE
+  ) # select only the exotic forb species
+head(comp.exoticforbs)
+
+# Relativize native comp
+comp.exoticforbs.rel <- decostand(comp.exoticforbs, method = "total")
+head(comp.exoticforbs.rel)
+
+# Glue the relativized df back to the plots and treatments
+comp.exoticforbs.rel.plots <- data.matrix %>%
+  select(plot, year, treatment) %>%
+  data.frame(comp.exoticforbs.rel)
+head(comp.exoticforbs.rel.plots)
+
+# Add columns for litter and bare ground 
+comp.exoticforbs.rel.plots.lit <- comp.exoticforbs.rel.plots %>%
+  left_join(soil.cover.wide, by = c('year', 'plot', 'treatment'))
+head(comp.exoticforbs.rel.plots.lit)
+```
+
+#### Export
+
+```{r}
+write.csv(
+  comp.exoticforbs.rel.plots.lit,
+  "analyses_manuscript/processed_data/exoticforb_comp_matrix.csv",
+  row.names = FALSE
+)
+```

@@ -1,0 +1,7 @@
+"response_variable","formula","treatment*year p-value","significance"
+"sprich","sprich ~ treatment * year",0.00568,"*"
+"sprich_native","sprich_native ~ treatment * year",0.08424,"n.s."
+"shannon","shannon ~ treatment * year",0.00272,"*"
+"shannon_native","shannon_native ~ treatment * year",0.4486,"n.s."
+"exotic_forb","exotic_forb ~ treatment * year",2e-05,"*"
+"native_forb","native_forb ~ treatment * year",0.08876,"n.s."
