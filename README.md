@@ -1,6 +1,6 @@
-# README
+[![DOI](https://zenodo.org/badge/887049261.svg)](https://doi.org/10.5281/zenodo.14089393)
 
-### Litter removal increases plant diversity by promoting both native and exotic forbs in heavily invaded coastal sage scrub in California, USA
+# READ ME for Litter removal increases plant diversity by promoting both native and exotic forbs in heavily invaded coastal sage scrub in California, USA
 
 *accepted at Restoration Ecology*
 
