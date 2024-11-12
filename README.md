@@ -8,21 +8,21 @@ November 11th, 2024
 
 ------------------------------------------------------------------------
 
-[Contact]{.underline}
+**Contact**
 
 Advyth Ramachandran
 
 PhD Student, Department of Ecology & Evolutionary Biology, University of Colorado, Boulder
 
-[**advyth.ramachandran\@colorado.edu**](mailto:advyth.ramachandran@colorado.edu){.email}
+[**advyth.ramachandran\@colorado.edu**](mailto:advyth.ramachandran@colorado.edu)
 
-*Formerly:*
+Formerly:
 
 Undergraduate Student, Department of Ecology, Evolution, & Organismal Biology; Center for Conservation Biology; University of California, Riverside
 
 ------------------------------------------------------------------------
 
-[Attribution]{.underline}
+**Attribution**
 
 If using the code in this study, please cite this repository and the paper.
 
